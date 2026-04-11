@@ -56,7 +56,7 @@ def prompt(
     Returns empty string on Ctrl-C or EOF.
     """
     suffix = f" [{default}]" if default else ""
-    display = color(f"  {question}{suffix}: ", Colors.DIM)
+    display = color(f"  {question}{suffix}: ", Colors.YELLOW)
 
     try:
         if password:

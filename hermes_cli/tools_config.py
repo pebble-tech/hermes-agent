@@ -33,33 +33,13 @@ PROJECT_ROOT = Path(__file__).parent.parent.resolve()
 
 # ─── UI Helpers (shared with setup.py) ────────────────────────────────────────
 
-def _print_info(text: str):
-    print(color(f"  {text}", Colors.DIM))
-
-def _print_success(text: str):
-    print(color(f"✓ {text}", Colors.GREEN))
-
-def _print_warning(text: str):
-    print(color(f"⚠ {text}", Colors.YELLOW))
-
-def _print_error(text: str):
-    print(color(f"✗ {text}", Colors.RED))
-
-def _prompt(question: str, default: str = None, password: bool = False) -> str:
-    if default:
-        display = f"{question} [{default}]: "
-    else:
-        display = f"{question}: "
-    try:
-        if password:
-            import getpass
-            value = getpass.getpass(color(display, Colors.YELLOW))
-        else:
-            value = input(color(display, Colors.YELLOW))
-        return value.strip() or default or ""
-    except (KeyboardInterrupt, EOFError):
-        print()
-        return default or ""
+from hermes_cli.cli_output import (  # noqa: E402 — late import block
+    print_error as _print_error,
+    print_info as _print_info,
+    print_success as _print_success,
+    print_warning as _print_warning,
+    prompt as _prompt,
+)
 
 # ─── Toolset Registry ─────────────────────────────────────────────────────────
 
@@ -677,86 +657,9 @@ def _toolset_has_keys(ts_key: str, config: dict = None) -> bool:
 # ─── Menu Helpers ─────────────────────────────────────────────────────────────
 
 def _prompt_choice(question: str, choices: list, default: int = 0) -> int:
-    """Single-select menu (arrow keys). Uses curses to avoid simple_term_menu
-    rendering bugs in tmux, iTerm, and other non-standard terminals."""
-
-    # Curses-based single-select — works in tmux, iTerm, and standard terminals
-    try:
-        import curses
-        result_holder = [default]
-
-        def _curses_menu(stdscr):
-            curses.curs_set(0)
-            if curses.has_colors():
-                curses.start_color()
-                curses.use_default_colors()
-                curses.init_pair(1, curses.COLOR_GREEN, -1)
-                curses.init_pair(2, curses.COLOR_YELLOW, -1)
-            cursor = default
-
-            while True:
-                stdscr.clear()
-                max_y, max_x = stdscr.getmaxyx()
-                try:
-                    stdscr.addnstr(0, 0, question, max_x - 1,
-                                   curses.A_BOLD | (curses.color_pair(2) if curses.has_colors() else 0))
-                except curses.error:
-                    pass
-
-                for i, c in enumerate(choices):
-                    y = i + 2
-                    if y >= max_y - 1:
-                        break
-                    arrow = "→" if i == cursor else " "
-                    line = f" {arrow}  {c}"
-                    attr = curses.A_NORMAL
-                    if i == cursor:
-                        attr = curses.A_BOLD
-                        if curses.has_colors():
-                            attr |= curses.color_pair(1)
-                    try:
-                        stdscr.addnstr(y, 0, line, max_x - 1, attr)
-                    except curses.error:
-                        pass
-
-                stdscr.refresh()
-                key = stdscr.getch()
-
-                if key in (curses.KEY_UP, ord('k')):
-                    cursor = (cursor - 1) % len(choices)
-                elif key in (curses.KEY_DOWN, ord('j')):
-                    cursor = (cursor + 1) % len(choices)
-                elif key in (curses.KEY_ENTER, 10, 13):
-                    result_holder[0] = cursor
-                    return
-                elif key in (27, ord('q')):
-                    return
-
-        curses.wrapper(_curses_menu)
-        from hermes_cli.curses_ui import flush_stdin
-        flush_stdin()
-        return result_holder[0]
-
-    except Exception:
-        pass
-
-    # Fallback: numbered input (Windows without curses, etc.)
-    print(color(question, Colors.YELLOW))
-    for i, c in enumerate(choices):
-        marker = "●" if i == default else "○"
-        style = Colors.GREEN if i == default else ""
-        print(color(f"  {marker} {i+1}. {c}", style) if style else f"  {marker} {i+1}. {c}")
-    while True:
-        try:
-            val = input(color(f"  Select [1-{len(choices)}] ({default + 1}): ", Colors.DIM))
-            if not val:
-                return default
-            idx = int(val) - 1
-            if 0 <= idx < len(choices):
-                return idx
-        except (ValueError, KeyboardInterrupt, EOFError):
-            print()
-            return default
+    """Single-select menu (arrow keys). Delegates to curses_radiolist."""
+    from hermes_cli.curses_ui import curses_radiolist
+    return curses_radiolist(question, choices, selected=default, cancel_returns=default)
 
 
 # ─── Token Estimation ────────────────────────────────────────────────────────
