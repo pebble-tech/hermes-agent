@@ -1,0 +1,226 @@
+name: Sync upstream
+
+# Keeps our fork rebased on NousResearch/hermes-agent:main, then rebuilds
+# `main` as an integration branch so a new machine can just `git clone`
+# and check out `main` to get a runtime-ready fork.
+#
+# As of 2026-04-26 both feature branches we used to carry merged upstream
+# (PR #13445 → upstream #15050, PR #14904 → upstream #15191), so the
+# integration build now reduces to:
+#
+#   main = upstream/main + ops-overlay
+#
+# `FEATURE_BRANCHES` is left empty but the loops are kept intact so
+# adding a new fork patch is a one-line edit (see FORK.md).
+#
+# Runs daily at 03:00 UTC and on manual dispatch. See FORK.md for the
+# maintenance model and recovery procedure.
+
+on:
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+    inputs:
+      skip_tests:
+        description: "Skip pytest (fast path for testing the workflow itself)"
+        required: false
+        default: "false"
+
+permissions:
+  contents: write
+  issues: write
+
+concurrency:
+  group: sync-upstream
+  cancel-in-progress: false
+
+env:
+  UPSTREAM_URL: https://github.com/NousResearch/hermes-agent.git
+  OPS_OVERLAY_BRANCH: ops-overlay
+  INTEGRATION_BRANCH: main
+  # Space-separated list of feature branches to rebase and cherry-pick into main.
+  # Order matters: commits from earlier branches are applied first. Empty
+  # is the steady-state when no patches are open upstream.
+  FEATURE_BRANCHES: ""
+  PLUGIN_REPO: pebble-tech/hermes-plugin-gateway-policy
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout fork (full history)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure git + upstream remote
+        run: |
+          git config user.name  "pebble-tech-bot"
+          git config user.email "ops@pebble-tech.invalid"
+          git remote add upstream "$UPSTREAM_URL"
+          git fetch origin --prune --tags
+          git fetch upstream --prune
+          echo "upstream_sha=$(git rev-parse upstream/main)" >> "$GITHUB_ENV"
+
+      - name: Rebase ops-overlay onto upstream
+        run: |
+          git checkout -B "$OPS_OVERLAY_BRANCH" "origin/$OPS_OVERLAY_BRANCH"
+          if ! git rebase upstream/main; then
+            {
+              echo "::error::Conflict rebasing $OPS_OVERLAY_BRANCH onto upstream/main"
+              echo "Conflicted files:"
+              git diff --name-only --diff-filter=U
+            } | tee /tmp/ops-overlay-conflict.txt
+            git rebase --abort || true
+            exit 1
+          fi
+
+      - name: Rebase each feature branch onto upstream
+        run: |
+          for branch in $FEATURE_BRANCHES; do
+            echo "::group::Rebase $branch"
+            git checkout -B "$branch" "origin/$branch"
+            if ! git rebase upstream/main; then
+              {
+                echo "::error::Conflict rebasing $branch onto upstream/main"
+                echo "Conflicted files:"
+                git diff --name-only --diff-filter=U
+              } | tee "/tmp/${branch//\//-}-conflict.txt"
+              git rebase --abort || true
+              exit 1
+            fi
+            echo "::endgroup::"
+          done
+
+      - name: Rebuild integration branch (main)
+        run: |
+          git checkout -B "$INTEGRATION_BRANCH" upstream/main
+
+          echo "::group::Cherry-pick ops-overlay"
+          git cherry-pick "upstream/main..$OPS_OVERLAY_BRANCH"
+          echo "::endgroup::"
+
+          for branch in $FEATURE_BRANCHES; do
+            echo "::group::Cherry-pick $branch"
+            if ! git cherry-pick "upstream/main..$branch"; then
+              {
+                echo "::error::Conflict cherry-picking $branch into $INTEGRATION_BRANCH"
+                echo "Conflicted files:"
+                git diff --name-only --diff-filter=U
+              } | tee "/tmp/${branch//\//-}-cherrypick-conflict.txt"
+              git cherry-pick --abort || true
+              exit 1
+            fi
+            echo "::endgroup::"
+          done
+
+      - name: Set up Python 3.11
+        if: inputs.skip_tests != 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install uv
+        if: inputs.skip_tests != 'true'
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install ripgrep
+        if: inputs.skip_tests != 'true'
+        run: sudo apt-get update && sudo apt-get install -y ripgrep
+
+      - name: Install hermes-agent (from integration branch)
+        if: inputs.skip_tests != 'true'
+        run: |
+          uv venv .venv --python 3.11
+          source .venv/bin/activate
+          uv pip install -e ".[all,dev]"
+
+      - name: Run focused tests against integration branch
+        if: inputs.skip_tests != 'true'
+        env:
+          OPENROUTER_API_KEY: ""
+          OPENAI_API_KEY: ""
+          NOUS_API_KEY: ""
+        run: |
+          source .venv/bin/activate
+          python -m pytest \
+            tests/gateway/test_pre_gateway_dispatch.py \
+            tests/gateway/test_session.py \
+            tests/hermes_cli/test_plugins.py \
+            -q --tb=short -n auto
+
+      - name: Smoke-test gateway-policy plugin against integration branch
+        if: inputs.skip_tests != 'true'
+        run: |
+          source .venv/bin/activate
+          git clone --depth=1 "https://github.com/${PLUGIN_REPO}.git" /tmp/plugin
+          cd /tmp/plugin
+          # Plugin tests stub what they need via conftest.py; the smoke-test
+          # catches manifest drift and confirms the plugin still loads.
+          python -m pytest -q --tb=short
+
+      - name: Push rebased source branches and integration branch
+        run: |
+          git push --force-with-lease origin "$OPS_OVERLAY_BRANCH"
+          for branch in $FEATURE_BRANCHES; do
+            git push --force-with-lease origin "$branch"
+          done
+          git push --force-with-lease origin "$INTEGRATION_BRANCH"
+
+      - name: Open / update sync-failure issue
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const runUrl = `https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const upstreamSha = process.env.upstream_sha || "(unknown)";
+            const today = new Date().toISOString().slice(0, 10);
+            const body = [
+              `The scheduled upstream-sync workflow failed.`,
+              ``,
+              `- Run: ${runUrl}`,
+              `- Upstream \`main\` at: \`${upstreamSha}\``,
+              ``,
+              `Likely causes (in rough order of frequency):`,
+              `1. Rebase conflict on a feature branch — upstream refactored the code the patch touches.`,
+              `2. Cherry-pick conflict when rebuilding \`main\` — two feature branches touch the same lines.`,
+              `3. Focused tests failed — upstream changed a signature the tests depend on.`,
+              `4. Plugin smoke-test failed — \`pebble-tech/hermes-plugin-gateway-policy\` no longer loads cleanly.`,
+              `5. Rebase conflict on \`ops-overlay\` — rare; only touches \`.github/workflows/sync-upstream.yml\` and \`FORK.md\`.`,
+              ``,
+              `**Manual recovery:**`,
+              ``,
+              `\`\`\``,
+              `git fetch upstream`,
+              `# Rebase the offending source branch (ops-overlay or a feature/*) onto upstream/main,`,
+              `# resolve conflicts, run focused tests, then:`,
+              `git push --force-with-lease pebble <branch>`,
+              `\`\`\``,
+              ``,
+              `Subsequent scheduled runs will rebuild \`main\` once the source branches are healthy.`,
+            ].join("\n");
+
+            const { data: openIssues } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              labels: "sync-failure",
+            });
+            if (openIssues.length > 0) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: openIssues[0].number,
+                body: `Another sync failure (${today}) at upstream \`${upstreamSha}\`: ${runUrl}`,
+              });
+            } else {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: `Upstream sync failed (${today})`,
+                body,
+                labels: ["sync-failure"],
+              });
+            }
