@@ -27,6 +27,7 @@ import { mkdirSync, readFileSync, writeFileSync, existsSync, readdirSync } from 
 import { randomBytes } from 'crypto';
 import qrcode from 'qrcode-terminal';
 import { matchesAllowedUser, parseAllowedUsers } from './allowlist.js';
+import { createOutboundIdTracker } from './outbound_ids.js';
 
 // Parse CLI args
 const args = process.argv.slice(2);
@@ -40,6 +41,23 @@ const WHATSAPP_DEBUG =
   process.env &&
   typeof process.env.WHATSAPP_DEBUG === 'string' &&
   ['1', 'true', 'yes', 'on'].includes(process.env.WHATSAPP_DEBUG.toLowerCase());
+
+// Opt-in: when true (and WHATSAPP_MODE === 'bot'), fromMe inbound messages
+// that are NOT echoes of our own /send or /send-media calls are forwarded
+// to the Python adapter with `fromOwner: true`. This lets plugins detect
+// "owner just typed in this customer chat" — needed for handover / sliding
+// TTL flows. Default OFF: existing deployments see no behavior change.
+//
+// Heuristic limitation: we distinguish bot-API-sent from owner-typed by
+// looking up `key.id` in `recentlySentIds` (populated when /send returns).
+// On bridge restart that set is empty, so a few in-flight bot replies may
+// briefly look like owner-typed until they age out. Acceptable; we don't
+// persist the set.
+const FORWARD_OWNER_MESSAGES =
+  typeof process !== 'undefined' &&
+  process.env &&
+  typeof process.env.WHATSAPP_FORWARD_OWNER_MESSAGES === 'string' &&
+  ['1', 'true', 'yes', 'on'].includes(process.env.WHATSAPP_FORWARD_OWNER_MESSAGES.toLowerCase());
 
 const PORT = parseInt(getArg('port', '3000'), 10);
 const SESSION_DIR = getArg('session', path.join(process.env.HOME || '~', '.hermes', 'whatsapp', 'session'));
@@ -113,9 +131,18 @@ const logger = pino({ level: 'warn' });
 const messageQueue = [];
 const MAX_QUEUE_SIZE = 100;
 
-// Track recently sent message IDs to prevent echo-back loops with media
-const recentlySentIds = new Set();
-const MAX_RECENT_IDS = 50;
+// Track recently sent message IDs.  Two purposes:
+//   1. Prevent echo-back loops with media in self-chat mode.
+//   2. (When WHATSAPP_FORWARD_OWNER_MESSAGES=true) distinguish our own
+//      bot-API outbound messages from owner-typed messages on the linked
+//      device so we can forward only the latter.
+// Capacity bounded (see outbound_ids.js) to keep memory flat under
+// sustained sending.
+const recentlySentIds = createOutboundIdTracker(512);
+
+function rememberSentId(id) {
+  recentlySentIds.remember(id);
+}
 
 let sock = null;
 let connectionState = 'disconnected';
@@ -208,23 +235,33 @@ async function startSocket() {
       const senderNumber = senderId.replace(/@.*/, '');
 
       // Handle fromMe messages based on mode
+      let fromOwner = false;
       if (msg.key.fromMe) {
         if (isGroup || chatId.includes('status')) continue;
 
         if (WHATSAPP_MODE === 'bot') {
-          // Bot mode: separate number. ALL fromMe are echo-backs of our own replies — skip.
-          continue;
+          // Bot mode: separate bot number. fromMe inbound is either
+          //   (a) an echo of our own /send (recentlySentIds will catch it), or
+          //   (b) a message the owner typed from their own phone using the
+          //       linked-device session.
+          //
+          // We always drop (a). We drop (b) too unless the operator opts in
+          // via WHATSAPP_FORWARD_OWNER_MESSAGES so existing deployments see
+          // no behavior change.
+          if (recentlySentIds.has(msg.key.id)) continue;
+          if (!FORWARD_OWNER_MESSAGES) continue;
+          fromOwner = true;
+        } else {
+          // Self-chat mode: only allow messages in the user's own self-chat.
+          // WhatsApp now uses LID (Linked Identity Device) format: 67427329167522@lid
+          // AND classic format: 34652029134@s.whatsapp.net
+          // sock.user has both: { id: "number:10@s.whatsapp.net", lid: "lid_number:10@lid" }
+          const myNumber = (sock.user?.id || '').replace(/:.*@/, '@').replace(/@.*/, '');
+          const myLid = (sock.user?.lid || '').replace(/:.*@/, '@').replace(/@.*/, '');
+          const chatNumber = chatId.replace(/@.*/, '');
+          const isSelfChat = (myNumber && chatNumber === myNumber) || (myLid && chatNumber === myLid);
+          if (!isSelfChat) continue;
         }
-
-        // Self-chat mode: only allow messages in the user's own self-chat
-        // WhatsApp now uses LID (Linked Identity Device) format: 67427329167522@lid
-        // AND classic format: 34652029134@s.whatsapp.net
-        // sock.user has both: { id: "number:10@s.whatsapp.net", lid: "lid_number:10@lid" }
-        const myNumber = (sock.user?.id || '').replace(/:.*@/, '@').replace(/@.*/, '');
-        const myLid = (sock.user?.lid || '').replace(/:.*@/, '@').replace(/@.*/, '');
-        const chatNumber = chatId.replace(/@.*/, '');
-        const isSelfChat = (myNumber && chatNumber === myNumber) || (myLid && chatNumber === myLid);
-        if (!isSelfChat) continue;
       }
 
       // Check allowlist for messages from others (resolve LID ↔ phone aliases)
@@ -358,6 +395,7 @@ async function startSocket() {
         quotedParticipant,
         botIds,
         timestamp: msg.messageTimestamp,
+        fromOwner,
       };
 
       messageQueue.push(event);
@@ -422,15 +460,7 @@ app.post('/send', async (req, res) => {
 
   try {
     const sent = await sock.sendMessage(chatId, { text: formatOutgoingMessage(message) });
-
-    // Track sent message ID to prevent echo-back loops
-    if (sent?.key?.id) {
-      recentlySentIds.add(sent.key.id);
-      if (recentlySentIds.size > MAX_RECENT_IDS) {
-        recentlySentIds.delete(recentlySentIds.values().next().value);
-      }
-    }
-
+    rememberSentId(sent?.key?.id);
     res.json({ success: true, messageId: sent?.key?.id });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -521,15 +551,7 @@ app.post('/send-media', async (req, res) => {
     }
 
     const sent = await sock.sendMessage(chatId, msgPayload);
-
-    // Track sent message ID to prevent echo-back loops
-    if (sent?.key?.id) {
-      recentlySentIds.add(sent.key.id);
-      if (recentlySentIds.size > MAX_RECENT_IDS) {
-        recentlySentIds.delete(recentlySentIds.values().next().value);
-      }
-    }
-
+    rememberSentId(sent?.key?.id);
     res.json({ success: true, messageId: sent?.key?.id });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -602,6 +624,9 @@ if (PAIR_ONLY) {
       console.log(`🔒 Allowed users: ${Array.from(ALLOWED_USERS).join(', ')}`);
     } else {
       console.log(`⚠️  No WHATSAPP_ALLOWED_USERS set — all messages will be processed`);
+    }
+    if (WHATSAPP_MODE === 'bot' && FORWARD_OWNER_MESSAGES) {
+      console.log(`👤 WHATSAPP_FORWARD_OWNER_MESSAGES=true — owner-typed messages will be forwarded with fromOwner:true`);
     }
     console.log();
     startSocket();
