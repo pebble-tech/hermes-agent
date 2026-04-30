@@ -1,5 +1,5 @@
-/** E.164 (+ optional), 2–15 digits after optional leading '+'. */
-export const E164_PAIRING_REGEX = /^\+?[1-9]\d{1,14}$/;
+/** E.164-like phone number for pairing: country code plus 10–15 digits total. */
+export const E164_PAIRING_REGEX = /^\+?[1-9]\d{9,14}$/;
 
 /**
  * @param {string} raw - CLI value passed to `--pair-with-number`
