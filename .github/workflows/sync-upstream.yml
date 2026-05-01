@@ -13,6 +13,8 @@ name: Sync upstream
 #
 #   feature/whatsapp-inbound-text-batch → #17165 WhatsApp text batching (open)
 #
+#   fix/auxiliary-opencode-strip-trailing-v1 → #18413 OpenCode auxiliary double /v1 (open)
+#
 # Drop a branch from FEATURE_BRANCHES (and delete it from the fork) once
 # its upstream PR merges — the cherry-pick becomes a no-op.
 #
@@ -59,7 +61,7 @@ env:
   #   Listing the tip cherry-picks all three in one range.
   # - feature/whatsapp-inbound-text-batch is independent (PR #17165); listed
   #   second so it cherry-picks after the busy-path stack.
-  FEATURE_BRANCHES: "fix/busy-path-pre-gateway-dispatch-upstream feature/whatsapp-inbound-text-batch"
+  FEATURE_BRANCHES: "fix/busy-path-pre-gateway-dispatch-upstream feature/whatsapp-inbound-text-batch fix/auxiliary-opencode-strip-trailing-v1"
   PLUGIN_REPO: pebble-tech/hermes-plugin-gateway-policy
 
 jobs:
