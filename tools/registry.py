@@ -241,6 +241,7 @@ class ToolEntry:
     # its own arguments and config. The executor floors its generic tool deadline by this so a
     # tool's own timeout is the one that fires — see get_deadline_floor.
     deadline_floor: Optional[Callable] = None
+    end_turn: bool = False
 
 
 class _PluginOverridePolicy:
@@ -844,7 +845,7 @@ class ToolRegistry:
         dynamic_schema_overrides: Callable | None = None, override: bool = False,
         scope: Optional[str] = None, execution_timeout: float | None = None,
         compat_args: Iterable[str] = (), self_checked_args: Iterable[str] = (),
-        deadline_floor: Callable | None = None):
+        deadline_floor: Callable | None = None, end_turn: bool = False):
         """Register a tool (called at import time by each tool file). ``override=True`` is an
         explicit opt-in for plugins replacing a built-in implementation (e.g. a headed-Chrome
         browser backend); without it, cross-toolset shadowing is rejected."""
@@ -911,7 +912,7 @@ class ToolRegistry:
                 max_result_size_chars=max_result_size_chars, execution_timeout=execution_timeout,
                 dynamic_schema_overrides=dynamic_schema_overrides, compat_args=frozenset(compat_args),
                 self_checked_args=frozenset(self_checked_args),
-                deadline_floor=deadline_floor)
+                deadline_floor=deadline_floor, end_turn=end_turn)
             self._generation += 1
 
     def deregister(self, name: str, *, scope: Optional[str] = None) -> None:
@@ -1152,6 +1153,11 @@ class ToolRegistry:
 
     def get_toolset_for_tool(self, name: str) -> Optional[str]:
         return self._attr(name, "toolset")
+
+    def is_end_turn(self, name: str) -> bool:
+        """Return True when the tool may legitimately finish the turn."""
+        entry = self.get_entry(name)
+        return bool(entry.end_turn) if entry else False
 
     def get_emoji(self, name: str, default: str = "⚡") -> str:
         """Return the emoji for a tool, or *default* if unset."""
