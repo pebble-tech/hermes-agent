@@ -90,6 +90,8 @@ Drop both files into `~/.hermes/plugins/hello-world/`, restart Hermes, and the m
 
 The model-facing tool description belongs in `schema["description"]`. The optional `ctx.register_tool(description=...)` value is separate `ToolEntry` registry metadata: when omitted, it defaults to the schema description, but Hermes does not copy it back into a schema that lacks `description`. Prefer defining the text once in the schema. If you provide both values, keep them synchronized; the model sees the schema value.
 
+`end_turn=True` is optional and only for tools whose successful side effect may legitimately finish the turn without any further model text. Hermes still keeps provider-safe history internally, but it skips the normal empty-after-tools nudge path for those tools.
+
 ### Project-local plugins (`./.hermes/plugins/`) {#project-local-plugins}
 
 The gateway does not load project-local plugins. Every Hermes session (`hermes`, `hermes --tui`, the Desktop app, messaging and cron) runs in the one gateway, which discovers plugins once for the whole process and never from the folder you started a session in. Setting `HERMES_ENABLE_PROJECT_PLUGINS=true` therefore has no effect on sessions: when a CLI or TUI session on the gateway's machine starts with it set in a folder whose `./.hermes/plugins/` has plugins, Hermes shows a warning at the start of that session and writes the same line to `gateway.log`.
@@ -102,7 +104,7 @@ Every `ctx.*` API below is available inside a plugin's `register(ctx)` function.
 
 | Capability | How |
 |-----------|-----|
-| Add tools | `ctx.register_tool(name=..., toolset=..., schema=..., handler=...)` |
+| Add tools | `ctx.register_tool(name=..., toolset=..., schema=..., handler=..., end_turn=False)` |
 | Add hooks | `ctx.register_hook("post_tool_call", callback)` |
 | Add slash commands | `ctx.register_command(name, handler, description)` — adds `/name` in CLI and gateway sessions |
 | Dispatch tools from commands | `ctx.dispatch_tool(name, args)` — invokes a registered tool with parent-agent context auto-wired |
