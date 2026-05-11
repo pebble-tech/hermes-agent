@@ -415,6 +415,24 @@ class TestGatewaySurfacesNullResponse:
 
         assert result == "Hello!"
 
+    def test_end_turn_tool_batch_empty_response_is_silent(self):
+        """end_turn-only tool exits leave empty final prose; avoid #18765 warning."""
+        from gateway.run import _normalize_empty_agent_response
+
+        agent_result = {
+            "final_response": "",
+            "api_calls": 2,
+            "partial": False,
+            "interrupted": False,
+            "turn_exit_reason": "end_turn_tool_batch",
+        }
+
+        response = _normalize_empty_agent_response(
+            agent_result, "", history_len=5,
+        )
+
+        assert response == ""
+
 
 # ===========================================================================
 # Prune: finalize_orphaned_compression_sessions
