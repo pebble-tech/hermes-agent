@@ -1335,6 +1335,7 @@ class TurnRunner(GatewayTurnProgressMixin, GatewaySessionAgentMixin):
             "error": result.get("error"),
             "compression_exhausted": result.get("compression_exhausted", False),
             "compression_deferred": result.get("compression_deferred", False),
+            "turn_exit_reason": result.get("turn_exit_reason"),
             "tools": ctx.tools_holder[0] or [],
             "history_offset": history_offset, "compacted_in_place": compacted_in_place, "session_id": effective_session_id,
             # Same rule as the direct API path (``_finish_turn_result``): the returned `messages` replaced the
@@ -1356,7 +1357,16 @@ class TurnRunner(GatewayTurnProgressMixin, GatewaySessionAgentMixin):
                 **({"billing_block": result["billing_block"]} if isinstance(result.get("billing_block"), dict) else {}),
                 **({"warning": result["warning"]} if isinstance(result.get("warning"), str) and result["warning"] else {}),
             }
-        if not final_response:
+        if final_response is None:
+            final_response = ""
+        # Successful end_turn exits often have empty prose; avoid the old
+        # ``if not final_response`` bailout unless failure metadata matches.
+        _empty_final = final_response == ""
+        if _empty_final and (
+            result.get("failed")
+            or result.get("partial")
+            or result.get("error")
+        ):
             final_response = _normalize_empty_agent_response(result, final_response or "", history_len=len(agent_history))
             final_response = _sanitize_gateway_final_response(ctx.source.platform, final_response)
             if not final_response:
