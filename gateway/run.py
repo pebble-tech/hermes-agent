@@ -1709,6 +1709,21 @@ import weakref as _weakref
 _gateway_runner_ref: _weakref.ref = lambda: None
 
 
+def _is_synthetic_empty_terminal_response(agent_result: dict, response: str) -> bool:
+    """True when ``response == "(empty)"`` is Hermes' terminal sentinel."""
+    if response != "(empty)" or not isinstance(agent_result, dict):
+        return False
+
+    messages = agent_result.get("messages")
+    if not isinstance(messages, list):
+        return False
+
+    for msg in reversed(messages):
+        if isinstance(msg, dict) and msg.get("role") == "assistant":
+            return bool(msg.get("_empty_terminal_sentinel"))
+    return False
+
+
 def _normalize_empty_agent_response(
     agent_result: dict,
     response: str,
@@ -1717,12 +1732,14 @@ def _normalize_empty_agent_response(
 ) -> str:
     """Normalize empty/None agent responses into user-facing messages.
 
-    Consolidates the existing ``failed`` handler and adds a catch-all for
-    the case where the agent did work (api_calls > 0) but returned no text.
-    Fix for #18765 — except intentional ``end_turn_tool_batch`` completions
-    (tool-only exits), which remain silent for the messaging layer.
+    Consolidates the existing ``failed`` handler and catch-all handling for
+    empty / synthetic-empty replies when the agent did work but produced no
+    user-visible text. Intentional ``end_turn_tool_batch`` completions remain
+    silent for the messaging layer.
     """
-    if response:
+    synthetic_empty = _is_synthetic_empty_terminal_response(agent_result, response)
+
+    if response and not synthetic_empty:
         return response
 
     if agent_result.get("failed"):
@@ -1750,10 +1767,19 @@ def _normalize_empty_agent_response(
             return f"⚠️ Processing stopped: {str(err)[:200]}. Try again."
         if agent_result.get("turn_exit_reason") == "end_turn_tool_batch":
             return ""
+        if synthetic_empty:
+            return (
+                "⚠️ The model returned no response after processing tool "
+                "results. This can happen with some models — try again or "
+                "rephrase your question."
+            )
         return (
             "⚠️ Processing completed but no response was generated. "
             "This may be a transient error — try sending your message again."
         )
+
+    if synthetic_empty:
+        return ""
 
     return response
 
@@ -8598,18 +8624,6 @@ class GatewayRunner(GatewayKanbanWatchersMixin):
                 return None
 
             response = agent_result.get("final_response") or ""
-
-            # Convert the agent's internal "(empty)" sentinel into a
-            # user-friendly message.  "(empty)" means the model failed to
-            # produce visible content after exhausting all retries (nudge,
-            # prefill, empty-retry, fallback).  Sending the raw sentinel
-            # looks like a bug; a short explanation is more helpful.
-            if response == "(empty)":
-                response = (
-                    "⚠️ The model returned no response after processing tool "
-                    "results. This can happen with some models — try again or "
-                    "rephrase your question."
-                )
             agent_messages = agent_result.get("messages", [])
             _response_time = time.time() - _msg_start_time
             _api_calls = agent_result.get("api_calls", 0)
