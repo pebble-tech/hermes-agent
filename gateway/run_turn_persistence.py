@@ -146,18 +146,10 @@ class GatewayTurnPersistenceMixin:
                 _platform_name, source.chat_id or "unknown",
             )
 
-        # "(empty)" = the model produced no visible content after exhausting all retries. One
-        # text with the CLI explainer and the desktop (agent/turn_explainers.py) so the user
-        # reads the same words on every surface.
         if not automatic_notices_allowed(source) and (response == "(empty)" or agent_result.get("failed")):
             # A failed or empty turn's text is runtime failure copy, never the model's answer: a bot
             # peer would take it as a message to answer (#137027).
             response = ""
-        if response == "(empty)" and not _intentional_silence:
-            from agent.turn_explainers import EMPTY_RESPONSE_EXPLANATION
-
-            _model = str(agent_result.get("model") or "").strip() or t("gateway.errors.empty_response_model_label")
-            response = t("gateway.shared.warn_passthrough", error=EMPTY_RESPONSE_EXPLANATION.format(model=_model))
         agent_messages = agent_result.get("messages", [])
         logger.info(
             "response ready: platform=%s chat=%s session=%s time=%.1fs api_calls=%d response=%d chars",
