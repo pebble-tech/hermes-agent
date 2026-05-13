@@ -21,6 +21,9 @@ name: Sync upstream
 #   fix/launcher-symlink-clobber-upstream → #20747 install.sh launcher write
 #   must not clobber venv/bin/hermes when ~/.local/bin/hermes is symlinked.
 #
+#   fix/diagnostic-status-leak-and-end-turn-nudge → open; diagnostic status
+#   leak fix + end-turn nudge path correction.
+#
 # Drop a branch from FEATURE_BRANCHES (and delete it from the fork) once
 # its upstream PR merges — the cherry-pick becomes a no-op.
 #
@@ -68,8 +71,10 @@ env:
   # - feature/whatsapp-inbound-text-batch is independent (PR #17165); listed
   #   second so it cherry-picks after the busy-path stack.
   # - fix/launcher-symlink-clobber-upstream is independent (PR #20747);
-  #   listed last because it touches only install.sh + its focused test.
-  FEATURE_BRANCHES: "fix/busy-path-pre-gateway-dispatch-upstream feature/whatsapp-inbound-text-batch fix/auxiliary-opencode-strip-trailing-v1 feature/end-turn-tool-contract-upstream fix/launcher-symlink-clobber-upstream"
+  #   listed before fix/diagnostic-status-leak-and-end-turn-nudge.
+  # - fix/diagnostic-status-leak-and-end-turn-nudge is independent (open);
+  #   listed last.
+  FEATURE_BRANCHES: "fix/busy-path-pre-gateway-dispatch-upstream feature/whatsapp-inbound-text-batch fix/auxiliary-opencode-strip-trailing-v1 feature/end-turn-tool-contract-upstream fix/launcher-symlink-clobber-upstream fix/diagnostic-status-leak-and-end-turn-nudge"
   PLUGIN_REPO: pebble-tech/hermes-plugin-gateway-policy
 
 jobs:
