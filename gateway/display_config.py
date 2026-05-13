@@ -58,6 +58,13 @@ _GLOBAL_DEFAULTS: dict[str, Any] = {
     # live, just cleaned up after success so the chat doesn't fill up with
     # stale breadcrumbs. Failed runs leave bubbles in place as breadcrumbs.
     "cleanup_progress": False,
+    # Controls whether internal agent recovery/diagnostic messages (e.g.
+    # "⚠️ Model returned empty after tool calls — nudging to continue",
+    # "↻ Thinking-only response — prefilling to continue") are forwarded
+    # to the platform via status_callback.  Values: "all" (forward, default)
+    # or "off" (suppress).  Set to "off" per-platform or globally when these
+    # implementation-detail messages should not surface in customer-facing chats.
+    "diagnostic_status": "all",
 }
 
 # ---------------------------------------------------------------------------
@@ -269,6 +276,12 @@ def _normalise(setting: str, value: Any) -> Any:
     if setting == "reasoning_style":
         val = str(value).lower()
         return val if val in ("code", "blockquote", "subtext") else "code"
+    if setting == "diagnostic_status":
+        if value is False:
+            return "off"
+        if value is True:
+            return "all"
+        return str(value).lower()
     if setting == "tool_preview_length":
         try:
             return int(value)
