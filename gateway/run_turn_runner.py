@@ -1510,6 +1510,7 @@ class TurnRunner(GatewayTurnProgressMixin, GatewaySessionAgentMixin):
             **{key: result[key] for key in _FAILURE_DESCRIPTOR_KEYS if key in result},
             "compression_exhausted": result.get("compression_exhausted", False),
             "compression_deferred": result.get("compression_deferred", False),
+            "turn_exit_reason": result.get("turn_exit_reason"),
             "tools": ctx.tools_holder[0] or [],
             "history_offset": history_offset, "compacted_in_place": compacted_in_place, "session_id": effective_session_id,
             # Same rule as the direct API path (``_finish_turn_result``): the returned `messages` replaced the
@@ -1535,7 +1536,16 @@ class TurnRunner(GatewayTurnProgressMixin, GatewaySessionAgentMixin):
         # A machinery turn the model chose to leave unanswered (``notification_no_reply``) stays
         # empty: the delivery seam gates that silence by turn kind, and a "no response" notice
         # filled in here would reach the chat for a turn no human started (#135816).
-        if not final_response and not is_intentional_silence_agent_result(result, final_response):
+        if final_response is None:
+            final_response = ""
+        # Successful end_turn exits often have empty prose; avoid the old
+        # ``if not final_response`` bailout unless failure metadata matches.
+        _empty_final = final_response == ""
+        if _empty_final and not is_intentional_silence_agent_result(result, final_response) and (
+            result.get("failed")
+            or result.get("partial")
+            or result.get("error")
+        ):
             final_response = _normalize_empty_agent_response(result, final_response or "", history_len=len(agent_history))
             final_response = _sanitize_gateway_final_response(ctx.source.platform, final_response)
             if not final_response:
