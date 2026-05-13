@@ -17574,7 +17574,14 @@ class GatewayRunner(GatewayKanbanWatchersMixin):
                 _context_length = getattr(_agent.context_compressor, "context_length", 0) or 0
             _resolved_model = getattr(_agent, "model", None) if _agent else None
 
-            if not final_response:
+            # Successful end_turn exits often have empty prose; avoid the old
+            # ``if not final_response`` bailout unless failure metadata matches.
+            _empty_final = final_response is None or final_response == ""
+            if _empty_final and (
+                result.get("failed")
+                or result.get("partial")
+                or result.get("error")
+            ):
                 error_msg = f"⚠️ {result['error']}" if result.get("error") else ""
                 return {
                     "final_response": error_msg,
@@ -17587,6 +17594,7 @@ class GatewayRunner(GatewayKanbanWatchersMixin):
                     "interrupt_message": result.get("interrupt_message"),
                     "error": result.get("error"),
                     "compression_exhausted": result.get("compression_exhausted", False),
+                    "turn_exit_reason": result.get("turn_exit_reason"),
                     "tools": tools_holder[0] or [],
                     "history_offset": len(agent_history),
                     "last_prompt_tokens": _last_prompt_toks,
@@ -17595,7 +17603,11 @@ class GatewayRunner(GatewayKanbanWatchersMixin):
                     "model": _resolved_model,
                     "context_length": _context_length,
                 }
-            
+
+            # Downstream MEDIA scan uses ``not in final_response``.
+            if final_response is None:
+                final_response = ""
+
             # Scan tool results for MEDIA:<path> tags that need to be delivered
             # as native audio/file attachments.  The TTS tool embeds MEDIA: tags
             # in its JSON response, but the model's final text reply usually
@@ -17741,8 +17753,10 @@ class GatewayRunner(GatewayKanbanWatchersMixin):
                 "completed": result_holder[0].get("completed") if result_holder[0] else None,
                 "interrupted": result_holder[0].get("interrupted", False) if result_holder[0] else False,
                 "partial": result_holder[0].get("partial", False) if result_holder[0] else False,
+                "failed": result_holder[0].get("failed", False) if result_holder[0] else False,
                 "error": result_holder[0].get("error") if result_holder[0] else None,
                 "interrupt_message": result_holder[0].get("interrupt_message") if result_holder[0] else None,
+                "turn_exit_reason": result.get("turn_exit_reason"),
                 "tools": tools_holder[0] or [],
                 "history_offset": _effective_history_offset,
                 "last_prompt_tokens": _last_prompt_toks,
