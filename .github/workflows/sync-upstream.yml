@@ -27,8 +27,9 @@ name: Sync upstream
 #   fix/queued-followup-media-delivery-upstream → #25119 preserve MEDIA-backed
 #   attachments when a queued follow-up arrives mid-reply.
 #
-#   fix/queued-followup-history-persistence-upstream → #25183 preserve queued
-#   follow-up transcript history across recursive drain chains.
+#   #25183 queued follow-up transcript history (was fix/queued-followup-history-
+#   persistence-upstream) merged upstream on NousResearch/hermes-agent:main as
+#   commits 9a815b6c8 and cc64a04f6 — dropped from FEATURE_BRANCHES.
 #
 # Drop a branch from FEATURE_BRANCHES (and delete it from the fork) once
 # its upstream PR merges — the cherry-pick becomes a no-op.
@@ -80,10 +81,8 @@ env:
   #   listed before fix/diagnostic-status-leak-and-end-turn-nudge.
   # - fix/diagnostic-status-leak-and-end-turn-nudge is independent (open).
   # - fix/queued-followup-media-delivery-upstream is independent (PR #25119);
-  #   listed before the queued follow-up history fix.
-  # - fix/queued-followup-history-persistence-upstream is independent
-  #   (PR #25183); listed last.
-  FEATURE_BRANCHES: "fix/busy-path-pre-gateway-dispatch-upstream feature/whatsapp-inbound-text-batch fix/auxiliary-opencode-strip-trailing-v1 feature/end-turn-tool-contract-upstream fix/launcher-symlink-clobber-upstream fix/diagnostic-status-leak-and-end-turn-nudge fix/queued-followup-media-delivery-upstream fix/queued-followup-history-persistence-upstream"
+  #   listed last.
+  FEATURE_BRANCHES: "fix/busy-path-pre-gateway-dispatch-upstream feature/whatsapp-inbound-text-batch fix/auxiliary-opencode-strip-trailing-v1 feature/end-turn-tool-contract-upstream fix/launcher-symlink-clobber-upstream fix/diagnostic-status-leak-and-end-turn-nudge fix/queued-followup-media-delivery-upstream"
   PLUGIN_REPO: pebble-tech/hermes-plugin-gateway-policy
 
 jobs:
