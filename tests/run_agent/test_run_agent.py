@@ -4383,7 +4383,7 @@ class TestRunConversation:
             patch.object(agent, "_persist_session"),
             patch.object(agent, "_save_trajectory"),
             patch.object(agent, "_cleanup_task_resources"),
-            patch.object(agent, "_emit_status", side_effect=_capture_status),
+            patch.object(agent, "_buffer_status", side_effect=_capture_status),
         ):
             result = agent.run_conversation("image")
 
@@ -4420,7 +4420,7 @@ class TestRunConversation:
             patch.object(agent, "_persist_session"),
             patch.object(agent, "_save_trajectory"),
             patch.object(agent, "_cleanup_task_resources"),
-            patch.object(agent, "_emit_status", side_effect=_capture_status),
+            patch.object(agent, "_buffer_status", side_effect=_capture_status),
         ):
             result = agent.run_conversation("image")
 
@@ -4465,7 +4465,7 @@ class TestRunConversation:
             patch.object(agent, "_persist_session"),
             patch.object(agent, "_save_trajectory"),
             patch.object(agent, "_cleanup_task_resources"),
-            patch.object(agent, "_emit_status", side_effect=_capture_status),
+            patch.object(agent, "_buffer_status", side_effect=_capture_status),
         ):
             result = agent.run_conversation("help me")
 
@@ -4492,7 +4492,7 @@ class TestRunConversation:
             patch.object(agent, "_persist_session"),
             patch.object(agent, "_save_trajectory"),
             patch.object(agent, "_cleanup_task_resources"),
-            patch.object(agent, "_emit_status", side_effect=_capture_status),
+            patch.object(agent, "_buffer_status", side_effect=_capture_status),
         ):
             result = agent.run_conversation("search for something")
 
@@ -4877,7 +4877,7 @@ class TestRunConversation:
         assert "No reply:" in result["final_response"]
 
     def test_empty_response_emits_status_for_gateway(self, agent):
-        """_emit_status is called during empty retries so gateway users see feedback."""
+        """_buffer_status is called during empty retries so gateway users see feedback."""
         self._setup_agent(agent)
         agent.base_url = "http://127.0.0.1:1234/v1"
 
@@ -4896,7 +4896,7 @@ class TestRunConversation:
             patch.object(agent, "_persist_session"),
             patch.object(agent, "_save_trajectory"),
             patch.object(agent, "_cleanup_task_resources"),
-            patch.object(agent, "_emit_status", side_effect=_capture_status),
+            patch.object(agent, "_buffer_status", side_effect=_capture_status),
         ):
             result = agent.run_conversation("answer me")
 
@@ -4954,7 +4954,7 @@ class TestRunConversation:
             patch.object(agent, "_persist_session"),
             patch.object(agent, "_save_trajectory"),
             patch.object(agent, "_cleanup_task_resources"),
-            patch.object(agent, "_emit_status", side_effect=_capture_status),
+            patch.object(agent, "_buffer_status", side_effect=_capture_status),
         ):
             result = agent.run_conversation("ask me")
         # Should recover partial streamed content, not fall through to (empty)
