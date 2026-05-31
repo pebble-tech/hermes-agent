@@ -348,7 +348,7 @@ jobs:
         id: sync_failure_issue
 
       - name: Notify Cursor sync recovery automation
-        if: failure() && secrets.CURSOR_SYNC_RECOVERY_WEBHOOK_URL != ''
+        if: failure()
         continue-on-error: true
         env:
           WEBHOOK_URL: ${{ secrets.CURSOR_SYNC_RECOVERY_WEBHOOK_URL }}
@@ -359,6 +359,10 @@ jobs:
           CONFLICT_FILES: ${{ steps.sync_failure_issue.outputs.conflict_files }}
           ISSUE_NUMBER: ${{ steps.sync_failure_issue.outputs.issue_number }}
         run: |
+          if [ -z "$WEBHOOK_URL" ] || [ -z "$WEBHOOK_KEY" ]; then
+            echo "Cursor webhook secrets not configured, skipping"
+            exit 0
+          fi
           payload=$(jq -n \
             --arg event "sync-failure" \
             --arg repository "${{ github.repository }}" \
