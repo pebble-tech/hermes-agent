@@ -83,6 +83,8 @@ pip install "git+https://github.com/pebble-tech/hermes-agent.git@main#egg=hermes
 
 Use `NousResearch/hermes-agent` directly. This fork is purely a stable deploy target for our VPSes; it carries no patches that aren't either already upstream or on their way upstream.
 
+**AI agents working in this fork:** follow [.cursor/rules/fork-contributor-workflow.mdc](.cursor/rules/fork-contributor-workflow.mdc) — upstream PR branch bases, fork-only vs upstream PR targets, and core vs plugin decisions.
+
 ## Upstream PR history
 
 | PR | Branch | Status |
