@@ -35,6 +35,16 @@ git push origin fix/<short-name>
 
 **Default:** implement in [nudge-hermes-agents](https://github.com/pebble-tech/nudge-hermes-agents) — plugins under `plugins/`, profile `config.yaml`, customer prompts — **not** in this repo's core.
 
+**Do not pick a path on instinct.** Explore **both** core and plugin/outside-core options, weigh trade-offs, then choose with an explicit recommendation.
+
+### Decision process
+
+1. **Identify the problem** — symptom, contract gap, who is affected.
+2. **Sketch core fix** — target files (`gateway/run.py`, hooks, tool registry), upstreamability, blast radius on all Hermes users.
+3. **Sketch plugin/outside-core fix** — existing hooks, [nudge-hermes-agents](https://github.com/pebble-tech/nudge-hermes-agents) plugins, profile `config.yaml`, customer prompts.
+4. **Compare pros/cons** — deploy speed, upstream merge path, maintenance burden, tenant scope, extensibility for future tenants.
+5. **Choose explicitly** — state the recommendation and why. **Default plugin** unless core wins on generic benefit to all/most users or no hook exists and one cannot be added generically.
+
 ### Edit hermes-agent core only when
 
 1. **No generic hook/plugin path exists** and one can be added upstream for all Hermes users, or
