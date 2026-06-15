@@ -1,0 +1,52 @@
+---
+description: Pebble fork contributor workflow — upstream PRs, branch bases, and core vs plugin decisions
+alwaysApply: true
+---
+
+# Fork contributor workflow (pebble-tech/hermes-agent)
+
+This repo is a **deploy fork**, not vanilla upstream. Read [FORK.md](../../FORK.md) for branch layout and sync mechanics.
+
+## Upstream PR workflow (mandatory)
+
+**Never branch upstream PRs from fork `main`.** Fork `main` = `upstream/main` + `ops-overlay` + open `FEATURE_BRANCHES` — dozens of fork-only commits. An upstream PR from a fork-main-based branch shows the entire fork history (anti-pattern: [pebble-tech/hermes-agent#18](https://github.com/pebble-tech/hermes-agent/pull/18) → [NousResearch/hermes-agent#46474](https://github.com/NousResearch/hermes-agent/pull/46474), closed with ~42 unrelated commits).
+
+### Upstream patches (to NousResearch/hermes-agent)
+
+```bash
+git fetch upstream
+git checkout -b fix/<short-name> upstream/main
+# one focused commit
+git push origin fix/<short-name>
+# open PR against NousResearch/hermes-agent main
+```
+
+- **One focused commit per upstream PR** when possible.
+- If the fix landed on fork `main` by mistake, **cherry-pick** the commit onto a fresh `upstream/main` branch — do not retarget the fork-main branch.
+- After opening the upstream PR, push the same branch to this fork and add it to `FEATURE_BRANCHES` in `.github/workflows/sync-upstream.yml` (commit that change on **`ops-overlay`**, not `main`).
+
+### Fork-only patches (pebble-tech/hermes-agent)
+
+- Branch from **`origin/main`** (integration) or the relevant feature branch.
+- Open PRs **only against `pebble-tech/hermes-agent:main`**.
+- **Never** open a cross-repo PR to NousResearch from a fork-main-based branch.
+
+## Core vs plugin / outside-core (mandatory)
+
+**Default:** implement in [nudge-hermes-agents](https://github.com/pebble-tech/nudge-hermes-agents) — plugins under `plugins/`, profile `config.yaml`, customer prompts — **not** in this repo's core.
+
+### Edit hermes-agent core only when
+
+1. **No generic hook/plugin path exists** and one can be added upstream for all Hermes users, or
+2. The change **benefits all or most Hermes users** and is upstreamable: security fix, generic gateway bug, missing extensibility API.
+
+### Keep Pebble-specific behavior out of core
+
+- Tenant prompts (BFA Jersey, etc.), KB delivery shims, deploy wiring → **plugins and monorepo config**, not `gateway/run.py` / `run_agent.py`.
+- Before editing gateway, agent loop, or core tool paths: **state why a plugin or hook cannot work** in the PR or plan.
+
+### Example: send_asset MEDIA delivery
+
+Gateway auto-append allowlists are upstream core policy. Pebble's `send_asset` is a kb-tools **plugin tool**. The correct fix was a plugin-side delivery shim ([nudge-hermes-agents#98](https://github.com/pebble-tech/nudge-hermes-agents/pull/98)), not hardcoding `send_asset` into core allowlists — even though an upstream allowlist PR ([#46474](https://github.com/NousResearch/hermes-agent/pull/46474)) was also considered.
+
+When in doubt: **plugin or monorepo first**, upstream core second.
