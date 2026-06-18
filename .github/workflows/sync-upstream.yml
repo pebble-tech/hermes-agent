@@ -111,6 +111,20 @@ jobs:
           git fetch upstream --prune
           echo "upstream_sha=$(git rev-parse upstream/main)" >> "$GITHUB_ENV"
 
+      - name: Validate SYNC_PUSH_TOKEN
+        env:
+          SYNC_PUSH_TOKEN: ${{ secrets.SYNC_PUSH_TOKEN }}
+        run: |
+          if [ -z "$SYNC_PUSH_TOKEN" ]; then
+            echo "::error::SYNC_PUSH_TOKEN is required to push rebased branches. Configure a classic PAT with repo + workflow scopes in repo secrets (see FORK_SYNC_AUTOMATION.md)."
+            exit 1
+          fi
+          if ! git ls-remote "https://x-access-token:${SYNC_PUSH_TOKEN}@github.com/${{ github.repository }}.git" HEAD >/dev/null 2>&1; then
+            echo "::error::SYNC_PUSH_TOKEN authentication failed (expired or revoked). Rotate the classic PAT in repo secrets — repo + workflow scopes — then re-run sync-upstream.yml."
+            exit 1
+          fi
+          echo "SYNC_PUSH_TOKEN validated"
+
       - name: Rebase ops-overlay onto upstream
         run: |
           git checkout -B "$OPS_OVERLAY_BRANCH" "origin/$OPS_OVERLAY_BRANCH"
