@@ -41,6 +41,8 @@ In `pebble-tech/hermes-agent` → Settings → Secrets and variables → Actions
 
 Existing `SYNC_PUSH_TOKEN` must include the `workflow` scope or sync fails at the push step with `refusing to allow a GitHub App to create or update workflow`.
 
+If the token is expired or revoked, sync fails at push (or at the early **Validate SYNC_PUSH_TOKEN** step) with `Authentication failed` / `Invalid username or token`. Rotate the PAT in repo secrets and re-run `sync-upstream.yml`.
+
 Optional for cloud agent sandbox (if `gh issue view` fails with permission errors):
 
 | Secret / env | Where |
