@@ -97,7 +97,7 @@ jobs:
           persist-credentials: false
 
       - name: Prepare sync failure recorder
-        run: chmod +x .github/scripts/record-sync-failure.sh
+        run: chmod +x .github/scripts/record-sync-failure.sh .github/scripts/validate-sync-push-token.sh
 
       - name: Configure git + upstream remote
         env:
@@ -115,15 +115,9 @@ jobs:
         env:
           SYNC_PUSH_TOKEN: ${{ secrets.SYNC_PUSH_TOKEN }}
         run: |
-          if [ -z "$SYNC_PUSH_TOKEN" ]; then
-            echo "::error::SYNC_PUSH_TOKEN is required to push rebased branches. Configure a classic PAT with repo + workflow scopes in repo secrets (see FORK_SYNC_AUTOMATION.md)."
-            exit 1
-          fi
-          if ! git ls-remote "https://x-access-token:${SYNC_PUSH_TOKEN}@github.com/${{ github.repository }}.git" HEAD >/dev/null 2>&1; then
-            echo "::error::SYNC_PUSH_TOKEN authentication failed (expired or revoked). Rotate the classic PAT in repo secrets — repo + workflow scopes — then re-run sync-upstream.yml."
-            exit 1
-          fi
-          echo "SYNC_PUSH_TOKEN validated"
+          SYNC_PUSH_TOKEN="$(printf '%s' "$SYNC_PUSH_TOKEN" | tr -d '[:space:]')"
+          export SYNC_PUSH_TOKEN
+          bash .github/scripts/validate-sync-push-token.sh "${{ github.repository }}"
 
       - name: Rebase ops-overlay onto upstream
         run: |
@@ -241,10 +235,11 @@ jobs:
         run: |
           # GITHUB_TOKEN cannot push workflow-file changes; checkout's persisted
           # credentials would override a PAT in the remote URL without these steps.
-          if [ -z "$SYNC_PUSH_TOKEN" ]; then
-            echo "::error::SYNC_PUSH_TOKEN is required to push rebased branches. Configure a classic PAT with repo + workflow scopes in repo secrets (see FORK_SYNC_AUTOMATION.md)."
-            exit 1
-          fi
+          # Re-validate here so a stale workflow on integration main still fails
+          # with a clear auth error instead of after rebase/tests.
+          SYNC_PUSH_TOKEN="$(printf '%s' "$SYNC_PUSH_TOKEN" | tr -d '[:space:]')"
+          export SYNC_PUSH_TOKEN
+          bash .github/scripts/validate-sync-push-token.sh "${{ github.repository }}"
           git config --local --unset-all "http.https://github.com/.extraheader" || true
           git config --local credential.helper ""
           git remote set-url origin "https://x-access-token:${SYNC_PUSH_TOKEN}@github.com/${{ github.repository }}.git"

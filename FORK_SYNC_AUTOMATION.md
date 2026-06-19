@@ -37,7 +37,7 @@ In `pebble-tech/hermes-agent` → Settings → Secrets and variables → Actions
 |--------|--------|
 | `CURSOR_SYNC_RECOVERY_WEBHOOK_URL` | Webhook URL from step 1 |
 | `CURSOR_SYNC_RECOVERY_WEBHOOK_KEY` | API key from step 1 |
-| `SYNC_PUSH_TOKEN` | **Required.** Classic PAT with `repo` + `workflow` scopes. Used for force-push after rebase — `GITHUB_TOKEN` cannot update workflow files (e.g. when upstream adds `.github/workflows/*.yml`). |
+| `SYNC_PUSH_TOKEN` | **Required.** Classic PAT with `repo` + `workflow` scopes. Used for force-push after rebase — `GITHUB_TOKEN` cannot update workflow files (e.g. when upstream adds `.github/workflows/*.yml`). Rotate when sync fails at `push` or `Validate SYNC_PUSH_TOKEN` with "authentication failed". |
 
 Existing `SYNC_PUSH_TOKEN` must include the `workflow` scope or sync fails at the push step with `refusing to allow a GitHub App to create or update workflow`.
 
