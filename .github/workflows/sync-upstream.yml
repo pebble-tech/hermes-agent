@@ -96,9 +96,6 @@ jobs:
           # Do not persist GITHUB_TOKEN — it overrides SYNC_PUSH_TOKEN on push.
           persist-credentials: false
 
-      - name: Prepare sync failure recorder
-        run: chmod +x .github/scripts/record-sync-failure.sh .github/scripts/validate-sync-push-token.sh
-
       - name: Configure git + upstream remote
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -121,7 +118,8 @@ jobs:
 
       - name: Rebase ops-overlay onto upstream
         run: |
-          git checkout -B "$OPS_OVERLAY_BRANCH" "origin/$OPS_OVERLAY_BRANCH"
+          # Force checkout: earlier steps may chmod scripts; a dirty tree blocks rebase.
+          git checkout -f -B "$OPS_OVERLAY_BRANCH" "origin/$OPS_OVERLAY_BRANCH"
           if ! git rebase upstream/main; then
             bash .github/scripts/record-sync-failure.sh rebase-ops-overlay "$OPS_OVERLAY_BRANCH"
             {
@@ -137,7 +135,7 @@ jobs:
         run: |
           for branch in $FEATURE_BRANCHES; do
             echo "::group::Rebase $branch"
-            git checkout -B "$branch" "origin/$branch"
+            git checkout -f -B "$branch" "origin/$branch"
             if ! git rebase upstream/main; then
               bash .github/scripts/record-sync-failure.sh rebase-feature-branch "$branch"
               {
@@ -153,7 +151,7 @@ jobs:
 
       - name: Rebuild integration branch (main)
         run: |
-          git checkout -B "$INTEGRATION_BRANCH" upstream/main
+          git checkout -f -B "$INTEGRATION_BRANCH" upstream/main
 
           echo "::group::Cherry-pick ops-overlay"
           if ! git cherry-pick "upstream/main..$OPS_OVERLAY_BRANCH"; then
