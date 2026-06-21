@@ -118,7 +118,9 @@ jobs:
 
       - name: Rebase ops-overlay onto upstream
         run: |
-          # Force checkout: earlier steps may chmod scripts; a dirty tree blocks rebase.
+          # Discard chmod / checkout artifacts on the initial branch before switching.
+          git reset --hard HEAD
+          git clean -fd
           git checkout -f -B "$OPS_OVERLAY_BRANCH" "origin/$OPS_OVERLAY_BRANCH"
           if ! git rebase upstream/main; then
             bash .github/scripts/record-sync-failure.sh rebase-ops-overlay "$OPS_OVERLAY_BRANCH"
@@ -135,6 +137,8 @@ jobs:
         run: |
           for branch in $FEATURE_BRANCHES; do
             echo "::group::Rebase $branch"
+            git reset --hard HEAD
+            git clean -fd
             git checkout -f -B "$branch" "origin/$branch"
             if ! git rebase upstream/main; then
               bash .github/scripts/record-sync-failure.sh rebase-feature-branch "$branch"
