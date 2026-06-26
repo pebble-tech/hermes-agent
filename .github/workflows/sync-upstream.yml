@@ -22,6 +22,9 @@ name: Sync upstream
 #   fix/queued-followup-media-delivery-upstream → #25119 preserve MEDIA-backed
 #   attachments when a queued follow-up arrives mid-reply.
 #
+#   fix/stt-echo-toggle → #53038 stt.echo config to suppress raw transcript
+#   echo back to messaging chats (default on).
+#
 #   #20747 launcher symlink clobber (was fix/launcher-symlink-clobber-upstream)
 #   closed without merge — core fix landed upstream as c75e1a03f (Closes #21454).
 #   Dropped from FEATURE_BRANCHES 2026-05-29.
@@ -81,7 +84,8 @@ env:
   # - fix/diagnostic-status-leak-and-end-turn-nudge is independent (PR #24853).
   # - fix/queued-followup-media-delivery-upstream is independent (PR #25119);
   #   listed last.
-  FEATURE_BRANCHES: "fix/busy-path-pre-gateway-dispatch-upstream fix/auxiliary-opencode-strip-trailing-v1 feature/end-turn-tool-contract-upstream fix/diagnostic-status-leak-and-end-turn-nudge fix/queued-followup-media-delivery-upstream"
+  # - fix/stt-echo-toggle is independent (PR #53038).
+  FEATURE_BRANCHES: "fix/busy-path-pre-gateway-dispatch-upstream fix/auxiliary-opencode-strip-trailing-v1 feature/end-turn-tool-contract-upstream fix/diagnostic-status-leak-and-end-turn-nudge fix/queued-followup-media-delivery-upstream fix/stt-echo-toggle"
   PLUGIN_REPO: pebble-tech/hermes-plugin-gateway-policy
 
 jobs:
