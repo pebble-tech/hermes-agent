@@ -387,6 +387,8 @@ def build_turn_context(
     agent._last_tool_calls_all_end_turn = False
     agent._last_content_with_tools = None
     agent._last_content_tools_all_housekeeping = False
+    agent._undelivered_tool_call_content = None
+    agent._undelivered_tool_call_content_nudged = False
     agent._mute_post_response = False
     agent._unicode_sanitization_passes = 0
     agent._tool_guardrails.reset_for_turn()
