@@ -217,24 +217,28 @@ class StreamDeliveryMixin:
             self._delivered_interim_texts.add(normalized)
 
     def _deliver_interim(self, visible: str, *, already_streamed: bool, record: list[str],
-                         asks_clarify: bool = False) -> None:
+                         asks_clarify: bool = False) -> bool:
         """Hand ``visible`` to ``interim_assistant_callback`` and mark ``record`` delivered; swallows callback errors.
         Commentary is model text ``transform_llm_output`` never sees, so a held turn drops it. With interim
         messages off, prose in the same message as a ``clarify`` call still goes to
-        ``clarify_context_callback``: it is what the user is asked to decide on."""
+        ``clarify_context_callback``: it is what the user is asked to decide on.
+
+        Returns True when the callback accepted the delivery."""
         if getattr(self, "_hold_stream", False):
-            return
+            return False
         cb = getattr(self, "interim_assistant_callback", None)
         if cb is None and asks_clarify:
             cb = getattr(self, "clarify_context_callback", None)
         if cb is None:
-            return
+            return False
         try:
             cb(visible, already_streamed=already_streamed)
             for part in record:
                 self._record_delivered_interim_text(part)
+            return True
         except Exception:
             logger.debug("interim_assistant_callback error", exc_info=True)
+            return False
 
     def _fire_streamed_codex_commentary(self, text: str) -> None:
         """Deliver a completed live Codex commentary message immediately."""
@@ -245,12 +249,17 @@ class StreamDeliveryMixin:
             return
         self._deliver_interim(visible, already_streamed=False, record=[visible])
 
-    def _emit_interim_assistant_message(self, assistant_msg: dict[str, Any]) -> None:
+    def _emit_interim_assistant_message(self, assistant_msg: dict[str, Any]) -> bool:
         """Surface a real mid-turn assistant commentary message to the UI layer. Does NOT set
         ``_response_was_previewed`` ("the final response was shown") — the CLI would then suppress a
-        different final summary."""
+        different final summary.
+
+        Returns whether the visible content was already delivered or accepted by the callback.
+        Messaging gateways can disable interim messages entirely, so callers that care about
+        user-visible delivery need this distinction."""
+        cb = getattr(self, "interim_assistant_callback", None)
         if not isinstance(assistant_msg, dict):
-            return
+            return False
         commentary_parts = self._extract_codex_interim_visible_parts(assistant_msg)
         # Dedup within this message and against earlier deliveries, first occurrence wins.
         pending: dict[str, str] = {}
@@ -271,12 +280,15 @@ class StreamDeliveryMixin:
             "\n\n".join(undelivered_parts).strip() if commentary_parts else self._interim_assistant_visible_text(assistant_msg)
         )
         if not visible or visible == "(empty)" or self._interim_text_was_delivered(visible):
-            return
-        already_streamed = self._interim_content_fully_streamed(visible)
+            return self._interim_content_was_streamed(visible) if visible else False
+        already_streamed = self._interim_content_was_streamed(visible)
         self._enqueue_stream_hook("on_interim_message", text=visible, already_streamed=already_streamed)
-        self._deliver_interim(visible, already_streamed=already_streamed,
-                              record=[visible] if clarify_content else undelivered_parts or [visible],
-                              asks_clarify=asks_clarify)
+        delivered = self._deliver_interim(
+            visible, already_streamed=already_streamed,
+            record=[visible] if clarify_content else undelivered_parts or [visible],
+            asks_clarify=asks_clarify,
+        )
+        return delivered or already_streamed
 
     def _ensure_stream_writer_state(self) -> None:
         """Lazily create the single-writer guard fields (#65991).
