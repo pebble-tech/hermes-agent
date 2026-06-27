@@ -25,6 +25,9 @@ name: Sync upstream
 #   fix/stt-echo-toggle → #53038 stt.echo config to suppress raw transcript
 #   echo back to messaging chats (default on).
 #
+#   fix/undelivered-tool-call-content → #53544 recover material assistant
+#   content generated during tool calls when interim delivery is disabled.
+#
 #   #20747 launcher symlink clobber (was fix/launcher-symlink-clobber-upstream)
 #   closed without merge — core fix landed upstream as c75e1a03f (Closes #21454).
 #   Dropped from FEATURE_BRANCHES 2026-05-29.
@@ -85,7 +88,8 @@ env:
   # - fix/queued-followup-media-delivery-upstream is independent (PR #25119);
   #   listed last.
   # - fix/stt-echo-toggle is independent (PR #53038).
-  FEATURE_BRANCHES: "fix/busy-path-pre-gateway-dispatch-upstream fix/auxiliary-opencode-strip-trailing-v1 feature/end-turn-tool-contract-upstream fix/diagnostic-status-leak-and-end-turn-nudge fix/queued-followup-media-delivery-upstream fix/stt-echo-toggle"
+  # - fix/undelivered-tool-call-content is independent (PR #53544).
+  FEATURE_BRANCHES: "fix/busy-path-pre-gateway-dispatch-upstream fix/auxiliary-opencode-strip-trailing-v1 feature/end-turn-tool-contract-upstream fix/diagnostic-status-leak-and-end-turn-nudge fix/queued-followup-media-delivery-upstream fix/stt-echo-toggle fix/undelivered-tool-call-content"
   PLUGIN_REPO: pebble-tech/hermes-plugin-gateway-policy
 
 jobs:
