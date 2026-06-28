@@ -101,25 +101,37 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          persist-credentials: false
           # Default GITHUB_TOKEN for checkout — SYNC_PUSH_TOKEN is configured only
           # before push. An empty/expired PAT here breaks checkout with auth errors
           # while leaving rebase/test steps unreachable (failed_step: unknown).
 
       - name: Prepare sync failure recorder
-        run: chmod +x .github/scripts/record-sync-failure.sh
+        run: chmod +x .github/scripts/record-sync-failure.sh .github/scripts/validate-sync-push-token.sh
 
       - name: Configure git + upstream remote
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           git config user.name  "pebble-tech-bot"
           git config user.email "ops@pebble-tech.invalid"
           git remote add upstream "$UPSTREAM_URL"
+          git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git"
           git fetch origin --prune --tags
           git fetch upstream --prune
           echo "upstream_sha=$(git rev-parse upstream/main)" >> "$GITHUB_ENV"
 
+      - name: Validate SYNC_PUSH_TOKEN
+        env:
+          SYNC_PUSH_TOKEN: ${{ secrets.SYNC_PUSH_TOKEN }}
+        run: |
+          SYNC_PUSH_TOKEN="$(printf '%s' "$SYNC_PUSH_TOKEN" | tr -d '[:space:]')"
+          export SYNC_PUSH_TOKEN
+          bash .github/scripts/validate-sync-push-token.sh "${{ github.repository }}"
+
       - name: Rebase ops-overlay onto upstream
         run: |
-          git checkout -B "$OPS_OVERLAY_BRANCH" "origin/$OPS_OVERLAY_BRANCH"
+          git checkout -f -B "$OPS_OVERLAY_BRANCH" "origin/$OPS_OVERLAY_BRANCH"
           if ! git rebase upstream/main; then
             bash .github/scripts/record-sync-failure.sh rebase-ops-overlay "$OPS_OVERLAY_BRANCH"
             {
@@ -135,7 +147,7 @@ jobs:
         run: |
           for branch in $FEATURE_BRANCHES; do
             echo "::group::Rebase $branch"
-            git checkout -B "$branch" "origin/$branch"
+            git checkout -f -B "$branch" "origin/$branch"
             if ! git rebase upstream/main; then
               bash .github/scripts/record-sync-failure.sh rebase-feature-branch "$branch"
               {
@@ -151,7 +163,7 @@ jobs:
 
       - name: Rebuild integration branch (main)
         run: |
-          git checkout -B "$INTEGRATION_BRANCH" upstream/main
+          git checkout -f -B "$INTEGRATION_BRANCH" upstream/main
 
           echo "::group::Cherry-pick ops-overlay"
           if ! git cherry-pick "upstream/main..$OPS_OVERLAY_BRANCH"; then
@@ -233,9 +245,14 @@ jobs:
         run: |
           # PAT is required to push workflow-file changes from rebased ops-overlay;
           # GITHUB_TOKEN checkout above keeps fetch alive when the PAT is missing.
-          if [ -n "$SYNC_PUSH_TOKEN" ]; then
-            git remote set-url origin "https://x-access-token:${SYNC_PUSH_TOKEN}@github.com/${{ github.repository }}.git"
-          fi
+          # Re-validate here so a stale workflow on integration main still fails
+          # with a clear auth error instead of after rebase/tests.
+          SYNC_PUSH_TOKEN="$(printf '%s' "$SYNC_PUSH_TOKEN" | tr -d '[:space:]')"
+          export SYNC_PUSH_TOKEN
+          bash .github/scripts/validate-sync-push-token.sh "${{ github.repository }}"
+          git config --local --unset-all "http.https://github.com/.extraheader" || true
+          git config --local credential.helper ""
+          git remote set-url origin "https://x-access-token:${SYNC_PUSH_TOKEN}@github.com/${{ github.repository }}.git"
 
       - name: Push rebased source branches and integration branch
         run: |
