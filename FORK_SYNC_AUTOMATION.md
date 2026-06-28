@@ -38,7 +38,11 @@ In `pebble-tech/hermes-agent` → Settings → Secrets and variables → Actions
 | `CURSOR_SYNC_RECOVERY_WEBHOOK_URL` | Webhook URL from step 1 |
 | `CURSOR_SYNC_RECOVERY_WEBHOOK_KEY` | API key from step 1 |
 
-Existing `SYNC_PUSH_TOKEN` is unchanged (workflow push token).
+`SYNC_PUSH_TOKEN` must be a **classic PAT** with `repo` + **`workflow`** scopes.
+GitHub App installation tokens (`ghs_` / `ghu_`) authenticate for fetch but
+GitHub rejects their push when rebased `ops-overlay` includes upstream
+`.github/workflows/*` changes. Rotate the secret if sync fails at `push` with
+"refusing to allow a GitHub App … without `workflows` permission".
 
 Optional for cloud agent sandbox (if `gh issue view` fails with permission errors):
 
