@@ -143,6 +143,14 @@ jobs:
             exit 1
           fi
 
+      - name: Reload FEATURE_BRANCHES from rebased ops-overlay
+        run: |
+          # Integration main may lag ops-overlay; read the authoritative list from
+          # the rebased ops-overlay workflow file so dropped branches are skipped.
+          branches=$(grep -E '^\s+FEATURE_BRANCHES:' .github/workflows/sync-upstream.yml | head -1 | sed -E 's/.*"([^"]+)".*/\1/')
+          echo "FEATURE_BRANCHES=$branches" >> "$GITHUB_ENV"
+          echo "Reloaded FEATURE_BRANCHES: $branches"
+
       - name: Rebase each feature branch onto upstream
         run: |
           for branch in $FEATURE_BRANCHES; do
