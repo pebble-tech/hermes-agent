@@ -25,6 +25,9 @@ name: Sync upstream
 #   fix/undelivered-tool-call-content → #53544 recover material assistant
 #   content generated during tool calls when interim delivery is disabled.
 #
+#   fix/telegram-forum-topic-reply-anchor → #61538 quote-reply triggering
+#   message in Telegram forum/supergroup topics (open).
+#
 #   #53038 STT echo toggle (was fix/stt-echo-toggle) closed without merge —
 #   equivalent `stt.echo_transcripts` landed upstream as bfc526272 / 4be749d15.
 #   Dropped from FEATURE_BRANCHES 2026-07-06.
@@ -89,7 +92,8 @@ env:
   # - fix/queued-followup-media-delivery-upstream is independent (PR #25119);
   #   listed last.
   # - fix/undelivered-tool-call-content is independent (PR #53544).
-  FEATURE_BRANCHES: "fix/busy-path-pre-gateway-dispatch-upstream fix/auxiliary-opencode-strip-trailing-v1 feature/end-turn-tool-contract-upstream fix/diagnostic-status-leak-and-end-turn-nudge fix/queued-followup-media-delivery-upstream fix/undelivered-tool-call-content"
+  # - fix/telegram-forum-topic-reply-anchor is independent (PR #61538).
+  FEATURE_BRANCHES: "fix/busy-path-pre-gateway-dispatch-upstream fix/auxiliary-opencode-strip-trailing-v1 feature/end-turn-tool-contract-upstream fix/diagnostic-status-leak-and-end-turn-nudge fix/queued-followup-media-delivery-upstream fix/undelivered-tool-call-content fix/telegram-forum-topic-reply-anchor"
   PLUGIN_REPO: pebble-tech/hermes-plugin-gateway-policy
 
 jobs:
