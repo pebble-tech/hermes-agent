@@ -7,11 +7,9 @@ name: Sync upstream
 # `FEATURE_BRANCHES` carries fork patches that have an open upstream PR.
 # As of 2026-05-14 we carry the WhatsApp stack tip plus several independent branches:
 #
-#   fix/busy-path-pre-gateway-dispatch-upstream  (stack tip)
-#     ← … ← feat/whatsapp-forward-owner-messages-upstream
-#   → NousResearch/hermes-agent#16445, #16485, busy-path PR (open)
-#
-#   fix/auxiliary-opencode-strip-trailing-v1 → #18413 OpenCode auxiliary double /v1 (open)
+#   fix/busy-path-pre-gateway-dispatch-upstream → #16489 busy-path
+#   pre_gateway_dispatch + interrupt_text snapshot (open). Owner-forward
+#   base (#16445/#16485) landed upstream via #55584.
 #
 #   feature/end-turn-tool-contract-upstream → #20713 terminal plugin tools can
 #   close a turn without triggering the empty-after-tools nudge path.
@@ -27,6 +25,10 @@ name: Sync upstream
 #
 #   fix/telegram-forum-topic-reply-anchor → #61538 quote-reply triggering
 #   message in Telegram forum/supergroup topics (open).
+#
+#   #18413 OpenCode auxiliary /v1 strip (was fix/auxiliary-opencode-strip-
+#   trailing-v1) closed without merge — shared Anthropic client strips
+#   trailing /v1 (85e6232a0, in v2026.6.19). Dropped 2026-07-23.
 #
 #   #53038 STT echo toggle (was fix/stt-echo-toggle) closed without merge —
 #   equivalent `stt.echo_transcripts` landed upstream as bfc526272 / 4be749d15.
@@ -84,16 +86,13 @@ env:
   # assume earlier cherry-picks are already on integration main).
   #
   # Currently:
-  # - fix/busy-path-pre-gateway-dispatch-upstream is stacked on
-  #   fix/whatsapp-forward-owner-allowlist-upstream (PR #16485), which is
-  #   stacked on feat/whatsapp-forward-owner-messages-upstream (PR #16445).
-  #   Listing the tip cherry-picks all three in one range.
+  # - fix/busy-path-pre-gateway-dispatch-upstream is independent (PR #16489);
+  #   owner-forward ancestors landed upstream via #55584.
   # - fix/diagnostic-status-leak-and-end-turn-nudge is independent (PR #24853).
-  # - fix/queued-followup-media-delivery-upstream is independent (PR #25119);
-  #   listed last.
+  # - fix/queued-followup-media-delivery-upstream is independent (PR #25119).
   # - fix/undelivered-tool-call-content is independent (PR #53544).
   # - fix/telegram-forum-topic-reply-anchor is independent (PR #61538).
-  FEATURE_BRANCHES: "fix/busy-path-pre-gateway-dispatch-upstream fix/auxiliary-opencode-strip-trailing-v1 feature/end-turn-tool-contract-upstream fix/diagnostic-status-leak-and-end-turn-nudge fix/queued-followup-media-delivery-upstream fix/undelivered-tool-call-content fix/telegram-forum-topic-reply-anchor"
+  FEATURE_BRANCHES: "fix/busy-path-pre-gateway-dispatch-upstream feature/end-turn-tool-contract-upstream fix/diagnostic-status-leak-and-end-turn-nudge fix/queued-followup-media-delivery-upstream fix/undelivered-tool-call-content fix/telegram-forum-topic-reply-anchor"
   PLUGIN_REPO: pebble-tech/hermes-plugin-gateway-policy
 
 jobs:
