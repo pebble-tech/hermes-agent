@@ -15,7 +15,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from gateway.config import Platform, PlatformConfig
+from gateway.config import Platform, PlatformConfig, StreamingConfig
 from gateway.platforms.base import BasePlatformAdapter, MessageEvent, MessageType, SendResult
 from gateway.run import GatewayRunner
 from gateway.session import SessionSource, build_session_key
@@ -426,4 +426,111 @@ async def test_queued_resend_branch_delivers_media_and_preserves_protected_examp
     assert "`MEDIA:/tmp/example.png`" in first_texts[0]
     assert any(str(media_file) in img["image_path"] for img in adapter.images), (
         f"expected native image delivery via queued resend, got: {adapter.images!r}"
+    )
+
+
+class _StreamConfirmedConsumer:
+    """Fake ``GatewayStreamConsumer``: reports the final text as already
+    delivered once ``run()`` completes, without wiring up any real edit/draft
+    delivery machinery. Drives the "already streamed" queued-flush branch —
+    ``_stream_confirmed_final_delivery`` returns True — instead of the
+    direct-send branch exercised by
+    ``test_queued_resend_branch_delivers_media_and_preserves_protected_example``."""
+
+    def __init__(self, **kwargs):
+        self.final_response_sent = False
+
+    def on_delta(self, text: str) -> None:
+        return None
+
+    def finish(self) -> None:
+        return None
+
+    async def run(self) -> None:
+        self.final_response_sent = True
+
+
+@pytest.mark.asyncio
+async def test_queued_resend_streamed_branch_still_uploads_media(
+    tmp_path, monkeypatch,
+):
+    """When streaming already delivered the first response's text, the
+    queued-flush branch must not resend it — but must still run the
+    explicit-MEDIA upload pass, since streaming never uploads attachments
+    on its own."""
+    media_file = _allowed_media_path(tmp_path, monkeypatch, "quote.png")
+    protected = "Tag files like `MEDIA:/tmp/example.png` in tool output."
+    _QueuedMediaAgent.calls = 0
+    _QueuedMediaAgent.first_response = f"Quote here\nMEDIA:{media_file}\n{protected}"
+
+    fake_dotenv = types.ModuleType("dotenv")
+    fake_dotenv.load_dotenv = lambda *args, **kwargs: None
+    monkeypatch.setitem(sys.modules, "dotenv", fake_dotenv)
+
+    fake_run_agent = types.ModuleType("run_agent")
+    fake_run_agent.AIAgent = _QueuedMediaAgent
+    monkeypatch.setitem(sys.modules, "run_agent", fake_run_agent)
+
+    monkeypatch.setattr("gateway.stream_consumer.GatewayStreamConsumer", _StreamConfirmedConsumer)
+
+    adapter = _QueuedMediaCaptureAdapter()
+    gateway_run = importlib.import_module("gateway.run")
+    runner = object.__new__(gateway_run.GatewayRunner)
+    runner.adapters = {adapter.platform: adapter}
+    runner._voice_mode = {}
+    runner._prefill_messages = []
+    runner._ephemeral_system_prompt = ""
+    runner._reasoning_config = None
+    runner._provider_routing = {}
+    runner._fallback_model = None
+    runner._session_db = None
+    runner._running_agents = {}
+    runner._session_run_generation = {}
+    runner.session_store = SimpleNamespace(_entries={}, _save=lambda: None)
+    runner.hooks = SimpleNamespace(loaded_hooks=False)
+    runner.config = SimpleNamespace(
+        thread_sessions_per_user=False,
+        group_sessions_per_user=False,
+        stt_enabled=False,
+        streaming=StreamingConfig(enabled=True, transport="edit"),
+    )
+    monkeypatch.setattr(gateway_run, "_hermes_home", tmp_path)
+    monkeypatch.setattr(gateway_run, "_resolve_runtime_agent_kwargs", lambda: {"api_key": "***"})
+
+    source = SessionSource(
+        platform=Platform.TELEGRAM,
+        chat_id="chat-1",
+        chat_type="dm",
+        thread_id="topic-1",
+    )
+    session_key = build_session_key(source)
+    adapter._pending_messages[session_key] = MessageEvent(
+        text="queued follow-up",
+        message_type=MessageType.TEXT,
+        source=source,
+        message_id="queued-1",
+    )
+
+    result = await runner._run_agent(
+        message="hello",
+        context_prompt="",
+        history=[],
+        source=source,
+        session_id="sess-queued-media-streamed",
+        session_key=session_key,
+    )
+
+    assert _QueuedMediaAgent.calls == 2
+    assert result["final_response"] == "follow-up processed"
+
+    # The fake stream consumer never touches the adapter itself, so any
+    # occurrence of the first response's text here would prove the
+    # "already streamed" branch wrongly resent it instead of trusting
+    # streaming's delivery.
+    assert not any("Quote here" in call["content"] for call in adapter.sent)
+
+    # Streaming only delivers text — the explicit-MEDIA upload pass must
+    # still run so the attachment isn't silently dropped.
+    assert any(str(media_file) in img["image_path"] for img in adapter.images), (
+        f"expected native image delivery even though text was already streamed, got: {adapter.images!r}"
     )

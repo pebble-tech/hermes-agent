@@ -25377,6 +25377,18 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                             "Queued follow-up for session %s: skipping resend because final streamed delivery was confirmed.",
                             session_key or "?",
                         )
+                        # Streaming only delivers text — MEDIA:<path> tags in
+                        # the streamed reply still need the same post-stream
+                        # upload pass the non-queued completed-turn path runs.
+                        try:
+                            synthetic_event = MessageEvent(
+                                text="",
+                                source=source,
+                                message_id=event_message_id,
+                            )
+                            await self._deliver_media_from_response(first_response, synthetic_event, adapter)
+                        except Exception as e:
+                            logger.warning("Failed to deliver streamed first response's media attachments: %s", e)
                     # Release deferred bg-review notifications now that the
                     # first response has been delivered.  Pop from the
                     # adapter's callback dict (prevents double-fire in
