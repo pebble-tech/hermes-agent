@@ -21,18 +21,19 @@ A scheduled GitHub Actions workflow ([`.github/workflows/sync-upstream.yml`](.gi
 2. Rebases `ops-overlay` onto `upstream/main`.
 3. Rebases each branch in `FEATURE_BRANCHES` onto `upstream/main`.
 4. Rebuilds `main` from scratch: checks out `upstream/main`, then cherry-picks `ops-overlay` followed by each feature branch's commits.
-5. Installs `hermes-agent` from the rebuilt `main` via `uv`.
-6. Runs focused tests:
+5. Strips upstream GitHub Actions workflows from integration `main`, keeping only the `WORKFLOW_ALLOWLIST` (default: `sync-upstream.yml`, `test-cursor-webhook.yml`). This fork is a deploy target — Nous CI/publish/autofix should not re-run here; focused tests in this workflow are the gate.
+6. Installs `hermes-agent` from the rebuilt `main` via `uv`.
+7. Runs focused tests:
    - `tests/gateway/test_pre_gateway_dispatch.py` (regression for the hook contract our gateway-policy plugin depends on)
    - `tests/gateway/test_session.py` (regression for WhatsApp canonical session keying)
    - `tests/hermes_cli/test_plugins.py`
-7. Clones `pebble-tech/hermes-plugin-gateway-policy` and runs its test suite (smoke-test catches plugin-side drift).
-8. On success → `push --force-with-lease` every source branch and `main`.
-9. On **any** failure → opens (or comments on) a `sync-failure`-labelled issue with the run URL, upstream SHA, failed step/branch, and a machine-readable `sync-failure` YAML block. Optionally POSTs the same payload to a Cursor automation webhook (see [FORK_SYNC_AUTOMATION.md](FORK_SYNC_AUTOMATION.md)). Never force-pushes a broken state.
+8. Clones `pebble-tech/hermes-plugin-gateway-policy` and runs its test suite (smoke-test catches plugin-side drift).
+9. On success → `push --force-with-lease` every source branch and `main`.
+10. On **any** failure → opens (or comments on) a `sync-failure`-labelled issue with the run URL, upstream SHA, failed step/branch, and a machine-readable `sync-failure` YAML block. Optionally POSTs the same payload to a Cursor automation webhook (see [FORK_SYNC_AUTOMATION.md](FORK_SYNC_AUTOMATION.md)). Never force-pushes a broken state.
 
 ### Why focused tests, not the full suite
 
-The full upstream `pytest tests/` would catch noise unrelated to our deploy target (flaky tests, missing env, etc.) and slow the feedback loop. The focused tests cover the contracts our customer plugins depend on: the `pre_gateway_dispatch` hook firing, WhatsApp session keying staying canonical, plugin manifests loading.
+The full upstream `pytest tests/` would catch noise unrelated to our deploy target (flaky tests, missing env, etc.) and slow the feedback loop. The focused tests cover the contracts our customer plugins depend on: the `pre_gateway_dispatch` hook firing, WhatsApp session keying staying canonical, plugin manifests loading. Upstream workflows stay in the tree on `ops-overlay` (so rebases stay clean) but are removed from rebuilt `main` so they do not schedule or open autofix PRs on this fork.
 
 ## Adding a new fork patch
 
