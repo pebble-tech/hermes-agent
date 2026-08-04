@@ -94,6 +94,10 @@ env:
   # - fix/telegram-forum-topic-reply-anchor is independent (PR #61538).
   FEATURE_BRANCHES: "fix/busy-path-pre-gateway-dispatch-upstream feature/end-turn-tool-contract-upstream fix/diagnostic-status-leak-and-end-turn-nudge fix/queued-followup-media-delivery-upstream fix/undelivered-tool-call-content fix/telegram-forum-topic-reply-anchor"
   PLUGIN_REPO: pebble-tech/hermes-plugin-gateway-policy
+  # Workflows kept on rebuilt integration `main`. Everything else inherited from
+  # upstream is stripped before push so Nous CI/publish/autofix does not re-run
+  # on this deploy fork (focused tests in this workflow are the gate).
+  WORKFLOW_ALLOWLIST: "sync-upstream.yml test-cursor-webhook.yml"
 
 jobs:
   sync:
@@ -111,6 +115,11 @@ jobs:
 
       - name: Prepare sync failure recorder
         run: chmod +x .github/scripts/record-sync-failure.sh .github/scripts/validate-sync-push-token.sh
+
+      # jq is required by record-sync-failure.sh; without it rebase conflicts exit
+      # 127 and the failure issue reports failed_step: unknown.
+      - name: Install jq
+        run: sudo apt-get update && sudo apt-get install -y jq
 
       - name: Configure git + upstream remote
         env:
@@ -153,6 +162,11 @@ jobs:
           branches=$(grep -E '^\s+FEATURE_BRANCHES:' .github/workflows/sync-upstream.yml | head -1 | sed -E 's/.*"([^"]+)".*/\1/')
           echo "FEATURE_BRANCHES=$branches" >> "$GITHUB_ENV"
           echo "Reloaded FEATURE_BRANCHES: $branches"
+          allowlist=$(grep -E '^\s+WORKFLOW_ALLOWLIST:' .github/workflows/sync-upstream.yml | head -1 | sed -E 's/.*"([^"]+)".*/\1/')
+          if [ -n "$allowlist" ]; then
+            echo "WORKFLOW_ALLOWLIST=$allowlist" >> "$GITHUB_ENV"
+            echo "Reloaded WORKFLOW_ALLOWLIST: $allowlist"
+          fi
 
       - name: Rebase each feature branch onto upstream
         run: |
@@ -199,6 +213,37 @@ jobs:
             echo "::endgroup::"
           done
 
+          # Strip upstream CI/publish workflows from deploy `main` only.
+          # ops-overlay keeps the full upstream tree so rebases stay clean;
+          # allowlist is reloaded from the rebased ops-overlay workflow file.
+          echo "::group::Strip non-ops workflows from integration main"
+          allowlist="${WORKFLOW_ALLOWLIST:-sync-upstream.yml test-cursor-webhook.yml}"
+          removed=0
+          for f in .github/workflows/*; do
+            [ -e "$f" ] || continue
+            base=$(basename "$f")
+            keep=false
+            for a in $allowlist; do
+              if [ "$base" = "$a" ]; then
+                keep=true
+                break
+              fi
+            done
+            if [ "$keep" = false ]; then
+              git rm -f --quiet "$f"
+              removed=$((removed + 1))
+              echo "removed $base"
+            else
+              echo "keep $base"
+            fi
+          done
+          if [ "$removed" -gt 0 ]; then
+            git commit -m "chore(fork): keep only ops workflows on integration main"
+          else
+            echo "No upstream workflows to strip"
+          fi
+          echo "::endgroup::"
+
       - name: Set up Python 3.11
         if: inputs.skip_tests != 'true'
         uses: actions/setup-python@v5
@@ -211,7 +256,7 @@ jobs:
 
       - name: Install ripgrep
         if: inputs.skip_tests != 'true'
-        run: sudo apt-get update && sudo apt-get install -y ripgrep
+        run: sudo apt-get install -y ripgrep
 
       - name: Install hermes-agent (from integration branch)
         if: inputs.skip_tests != 'true'
