@@ -180,22 +180,153 @@ async def test_non_streaming_media_failure_notifies_user(tmp_path, monkeypatch):
     assert adapter.notices == ["⚠️ Couldn't deliver the video attachment."]
 
 
-class _DiscordMediaFailureAdapter(BasePlatformAdapter):
-    """Minimal adapter to exercise non-streaming MEDIA failure notification."""
+@pytest.mark.asyncio
+async def test_queued_followup_delivery_strips_media_tag_from_text_and_sends_image(
+    tmp_path, monkeypatch,
+):
+    event = _event(thread_id="topic-1")
+    media_file = _allowed_media_path(tmp_path, monkeypatch, "pricelist.png")
+    runner = object.__new__(GatewayRunner)
+    runner._thread_metadata_for_source = lambda source, anchor=None: {"thread_id": "topic-1"}
+    runner._reply_anchor_for_event = lambda event: event.message_id
+
+    adapter = SimpleNamespace(
+        name="test",
+        extract_media=BasePlatformAdapter.extract_media,
+        extract_images=BasePlatformAdapter.extract_images,
+        extract_local_files=BasePlatformAdapter.extract_local_files,
+        send=AsyncMock(return_value=SendResult(success=True, message_id="text")),
+        send_multiple_images=AsyncMock(return_value=None),
+        send_voice=AsyncMock(return_value=SendResult(success=True, message_id="voice")),
+        send_document=AsyncMock(return_value=SendResult(success=True, message_id="doc")),
+        send_video=AsyncMock(return_value=SendResult(success=True, message_id="video")),
+    )
+
+    await GatewayRunner._deliver_queued_first_response(
+        runner,
+        f"Quote here\nMEDIA:{media_file}",
+        source=event.source,
+        adapter=adapter,
+        metadata={"thread_id": "topic-1"},
+        event_message_id=event.message_id,
+    )
+
+    adapter.send.assert_awaited_once_with(
+        "chat-1",
+        "Quote here",
+        metadata={"thread_id": "topic-1"},
+    )
+    adapter.send_multiple_images.assert_awaited_once_with(
+        chat_id="chat-1",
+        images=[(f"file://{media_file.as_posix()}", "")],
+        metadata={"thread_id": "topic-1"},
+    )
+
+
+@pytest.mark.asyncio
+async def test_queued_followup_delivery_keeps_remote_image_url_in_text():
+    event = _event(thread_id="topic-1")
+    runner = object.__new__(GatewayRunner)
+    runner._thread_metadata_for_source = lambda source, anchor=None: {"thread_id": "topic-1"}
+    runner._reply_anchor_for_event = lambda event: event.message_id
+
+    adapter = SimpleNamespace(
+        name="test",
+        extract_media=BasePlatformAdapter.extract_media,
+        extract_images=BasePlatformAdapter.extract_images,
+        extract_local_files=BasePlatformAdapter.extract_local_files,
+        send=AsyncMock(return_value=SendResult(success=True, message_id="text")),
+        send_multiple_images=AsyncMock(return_value=None),
+        send_voice=AsyncMock(return_value=SendResult(success=True, message_id="voice")),
+        send_document=AsyncMock(return_value=SendResult(success=True, message_id="doc")),
+        send_video=AsyncMock(return_value=SendResult(success=True, message_id="video")),
+    )
+
+    response = "See this mockup\nhttps://example.com/mockup.png"
+    await GatewayRunner._deliver_queued_first_response(
+        runner,
+        response,
+        source=event.source,
+        adapter=adapter,
+        metadata={"thread_id": "topic-1"},
+        event_message_id=event.message_id,
+    )
+
+    adapter.send.assert_awaited_once_with(
+        "chat-1",
+        response,
+        metadata={"thread_id": "topic-1"},
+    )
+    adapter.send_multiple_images.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_queued_followup_delivery_preserves_protected_media_example():
+    """Inline-code MEDIA examples must remain visible after queued text cleanup."""
+    event = _event(thread_id="topic-1")
+    runner = object.__new__(GatewayRunner)
+    runner._thread_metadata_for_source = lambda source, anchor=None: {"thread_id": "topic-1"}
+    runner._reply_anchor_for_event = lambda event: event.message_id
+
+    adapter = SimpleNamespace(
+        name="test",
+        extract_media=BasePlatformAdapter.extract_media,
+        extract_images=BasePlatformAdapter.extract_images,
+        extract_local_files=BasePlatformAdapter.extract_local_files,
+        send=AsyncMock(return_value=SendResult(success=True, message_id="text")),
+        send_multiple_images=AsyncMock(return_value=None),
+        send_voice=AsyncMock(return_value=SendResult(success=True, message_id="voice")),
+        send_document=AsyncMock(return_value=SendResult(success=True, message_id="doc")),
+        send_video=AsyncMock(return_value=SendResult(success=True, message_id="video")),
+    )
+
+    response = "Tag files like `MEDIA:/tmp/example.png` in tool output."
+    await GatewayRunner._deliver_queued_first_response(
+        runner,
+        response,
+        source=event.source,
+        adapter=adapter,
+        metadata={"thread_id": "topic-1"},
+        event_message_id=event.message_id,
+    )
+
+    adapter.send.assert_awaited_once_with(
+        "chat-1",
+        response,
+        metadata={"thread_id": "topic-1"},
+    )
+    adapter.send_multiple_images.assert_not_awaited()
+    adapter.send_document.assert_not_awaited()
+
+
+class _QueuedMediaCaptureAdapter(BasePlatformAdapter):
+    """Adapter that records text + native image delivery for queued-resend tests."""
 
     def __init__(self):
-        super().__init__(PlatformConfig(enabled=True, token="test"), Platform.DISCORD)
-        self.notices: list[str] = []
+        super().__init__(PlatformConfig(enabled=True, token="test"), Platform.TELEGRAM)
+        self.sent = []
+        self.images = []
 
     async def connect(self, *, is_reconnect: bool = False):
         return True
 
     async def disconnect(self):
-        pass
+        return None
 
-    async def send(self, chat_id, content=None, **kwargs):
-        self.notices.append(content or "")
-        return SendResult(success=True, message_id="notice")
+    async def send(self, chat_id, content, reply_to=None, metadata=None):
+        self.sent.append({"chat_id": chat_id, "content": content, "metadata": metadata})
+        return SendResult(success=True, message_id=f"text-{len(self.sent)}")
+
+    async def send_image_file(self, chat_id, image_path, caption=None, reply_to=None, metadata=None, **kwargs):
+        self.images.append({"chat_id": chat_id, "image_path": image_path, "metadata": metadata})
+        return SendResult(success=True, message_id=f"img-{len(self.images)}")
+
+    async def send_multiple_images(self, chat_id, images, metadata=None, human_delay=0.0):
+        for image_url, _alt in images:
+            path = image_url
+            if path.startswith("file://"):
+                path = path[len("file://"):]
+            self.images.append({"chat_id": chat_id, "image_path": path, "metadata": metadata})
 
     async def get_chat_info(self, chat_id):
         return {"id": chat_id, "type": "dm"}
