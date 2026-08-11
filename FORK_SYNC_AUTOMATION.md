@@ -10,7 +10,7 @@ runs. Code lives in this repo (`ops-overlay` → daily cherry-pick to `main`).
 1. Open [cursor.com/automations/new](https://cursor.com/automations/new)
 2. **Trigger:** Webhook
 3. **Repository:** `pebble-tech/hermes-agent`, default branch `main` (agent reads skill from checkout)
-4. **Tools:** enable **Open pull request** (preferred — PRs target source branches, not `main`)
+4. **Tools:** keep **Open pull request** enabled as a fallback only (agent should usually force-push the source branch and skip PRs)
 5. **Prompt** (paste and adjust):
 
 ```
@@ -19,12 +19,13 @@ You are recovering a failed pebble-tech/hermes-agent upstream sync.
 1. Read the webhook JSON payload (event, upstream_sha, failed_step, failed_branch, conflict_files, workflow_run_url, issue_number).
 2. Read FORK.md and follow .cursor/skills/recover-fork-sync/SKILL.md exactly.
 3. Fix the failing SOURCE branch (ops-overlay or a FEATURE_BRANCHES entry). Never commit recovery fixes to integration main.
-4. If upstream absorbed the patch (closed/superseded PR), drop the branch from FEATURE_BRANCHES via an ops-overlay PR.
-5. Open a PR to the source branch you fixed (not to main).
-6. After merge, run: gh workflow run sync-upstream.yml --repo pebble-tech/hermes-agent --ref main
-7. Wait for sync success, comment on the sync-failure issue, close it.
+4. If upstream absorbed the patch (closed/superseded PR), drop the branch from FEATURE_BRANCHES via an ops-overlay change (push or PR to ops-overlay only).
+5. Default delivery: after focused tests pass, `git push --force-with-lease origin <source-branch>`. Do NOT open a pull request when the source branch was updated successfully.
+6. Open a PR only if force-push is blocked or human review is required before updating the source branch. If you open a PR, base it on the SOURCE branch (ops-overlay or feature/*), never integration main. Do not leave orphan cursor/* branches that duplicate an already-updated source tip.
+7. After the source branch is updated, run: gh workflow run sync-upstream.yml --repo pebble-tech/hermes-agent --ref main
+8. Wait for sync success, comment on the sync-failure issue, close it.
 
-Use gh and git. Run focused tests from the skill before opening the PR.
+Use gh and git. Run focused tests from the skill before pushing.
 ```
 
 6. Save the automation → copy **Webhook URL** and **API key**
@@ -93,5 +94,6 @@ On sync **success**: no webhook, no new issue.
 ## Security
 
 - Webhook URL + key are repo secrets — never commit them
-- Automation should open PRs to source branches for human or policy review before merge
+- Prefer direct force-with-lease to the failing source branch; open a PR only when push is blocked or review is required
+- Never open recovery PRs against integration `main`
 - Do not grant the agent direct push to `main`
