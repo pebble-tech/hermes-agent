@@ -101,8 +101,23 @@ python -m pytest \
 
 ## After fix — trigger sync
 
-Prefer opening a **PR to the source branch** (`ops-overlay` or feature/*) for
-review. After merge (or direct push if automation policy allows):
+**Default:** push the fixed source branch directly:
+
+```bash
+git push --force-with-lease origin <failed_branch>
+```
+
+Do **not** open a pull request when that push succeeds. Skip orphan
+`cursor/hermes-agent-upstream-sync-recovery-*` branches that only duplicate the
+updated source tip.
+
+Open a PR **only if** force-push is blocked or human review is required before
+updating the source branch. If you open a PR:
+
+- base = the **source branch** (`ops-overlay` or `feature/*` / `fix/*`)
+- never base = integration `main`
+
+Then trigger sync:
 
 ```bash
 gh workflow run sync-upstream.yml --repo pebble-tech/hermes-agent --ref main
@@ -128,4 +143,5 @@ git rev-list --count origin/main..upstream/main   # should be 0 after successful
 - Do **not** commit recovery fixes to integration `main`
 - Do **not** leave `main` tracking `upstream/main`
 - Do **not** add obsolete branches back to `FEATURE_BRANCHES`
+- Do **not** open a recovery PR against `main` when the source branch is already updated
 - Minimize scope — fork ops only, no unrelated Hermes core changes
