@@ -3768,8 +3768,47 @@ class GatewayRunner(
     exit_reason = property(lambda self: self._exit_reason)
     exit_code = property(lambda self: self._exit_code)
 
+    def _ensure_source_profile(self, source: SessionSource) -> Optional[str]:
+        """Stamp ``source.profile`` from configured routes when multiplexing.
+
+        Cheap: if the source already carries a profile (``build_source``,
+        adapter ownership, or a prior call), return it without re-matching
+        routes. Unset stamps are the reconnect / internal / slash-command
+        gap — ``_session_key_for_source`` used to fall back to the process
+        default (``agent:main:``), so ``/new`` in an owner-routed DM could
+        reset the customer session.
+
+        Returns the stamped name, or ``None`` when multiplexing is off, the
+        route was rejected, or no route matches (callers treat that as
+        default / ``agent:main``).
+        """
+        if not getattr(getattr(self, "config", None), "multiplex_profiles", False):
+            return getattr(source, "profile", None) or None
+        if getattr(source, "profile_route_rejected", False) is True:
+            return None
+        existing = getattr(source, "profile", None)
+        if existing:
+            return existing
+        from gateway.profile_routing import ProfileRouteRejected
+
+        try:
+            source.profile = self._profile_name_for_source(source)
+        except ProfileRouteRejected:
+            source.profile_route_rejected = True
+            return None
+        except Exception:
+            logger.warning(
+                "Profile resolution failed for %s/%s, defaulting to active profile",
+                getattr(getattr(source, "platform", None), "value", source.platform),
+                getattr(source, "chat_id", None),
+                exc_info=True,
+            )
+            return None
+        return source.profile
+
     def _session_key_for_source(self, source: SessionSource) -> str:
         """Resolve the current session key for a source, honoring gateway config when available."""
+        self._ensure_source_profile(source)
         if hasattr(self, "session_store") and self.session_store is not None:
             try:
                 session_key = self.session_store._generate_session_key(source)
@@ -4285,6 +4324,48 @@ class GatewayRunner(
                 source.platform.value, source.chat_id, getattr(source, "guild_id", None),
                 explicit_profile or "(no profile)", exc_info=True)
             return get_hermes_home()
+
+    def _home_channel_configured_for_source(self, source: SessionSource) -> bool:
+        """Whether this platform has a home channel under the source's profile.
+
+        On a multiplexed gateway the process ``self.config`` and the outer
+        default-profile runtime scope belong to the multiplexer, not the
+        routed profile. Probe secrets/env/yaml inside
+        ``_profile_runtime_scope`` so an owner-routed DM does not inherit
+        the default profile's missing (or present) home channel.
+        """
+        def _probe(config) -> bool:
+            platform_name = source.platform.value
+            env_key = _home_target_env_var(platform_name)
+            home_env = ""
+            try:
+                from agent.secret_scope import get_secret
+
+                home_env = (get_secret(env_key) or "").strip() if env_key else ""
+            except Exception:
+                home_env = ""
+            if not home_env:
+                home_env = (os.getenv(env_key) or "").strip() if env_key else ""
+            if home_env:
+                return True
+            try:
+                if config.get_home_channel(source.platform):
+                    return True
+            except Exception:
+                pass
+            return False
+
+        if getattr(getattr(self, "config", None), "multiplex_profiles", False):
+            self._ensure_source_profile(source)
+            with _profile_runtime_scope(self._resolve_profile_home_for_source(source)):
+                try:
+                    from gateway.config import load_gateway_config as _lgc
+
+                    cfg = _lgc()
+                except Exception:
+                    cfg = self.config
+                return _probe(cfg)
+        return _probe(self.config)
 
     @dataclasses.dataclass
     class _RunAgentDisplay:

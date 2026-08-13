@@ -34,7 +34,9 @@ class SessionRecoveryMixin:
 
     def _resolve_profile_for_key(self, source: Optional[SessionSource] = None) -> Optional[str]:
         """Profile namespace for session keys: None when multiplexing is off (legacy
-        ``agent:main``), else ``source.profile`` or the active profile."""
+        ``agent:main``), else ``source.profile`` (set by the /p/<profile>/ URL prefix, a
+        per-credential adapter, or ``GatewayRunner._ensure_source_profile`` before key
+        resolution) or the active profile when the stamp is still unset after that."""
         if not getattr(self.config, "multiplex_profiles", False):
             return None
         if source is not None and source.profile:

@@ -23,6 +23,7 @@ def mock_runner():
     runner._resolve_profile_home_for_source = GatewayRunner._resolve_profile_home_for_source.__get__(runner)
     # _handle_message's ingress gates (profile route rejection) live in this helper.
     runner._hm_admit_event = GatewayRunner._hm_admit_event.__get__(runner)
+    runner._ensure_source_profile = GatewayRunner._ensure_source_profile.__get__(runner)
     return runner
 
 

@@ -2353,12 +2353,30 @@ class BasePlatformAdapter(ABC):
     # ``_pending_text_batch_tasks`` dicts and ``_flush_text_batch(key)``.
 
     def _event_session_key(self, event: "MessageEvent") -> str:
-        """Adapter-level session key for ``event``, profile-namespaced like the agent run."""
+        """Session key for batching, matching the gateway's routed namespace.
+
+        Prefer ``runner._session_key_for_source`` so an unset
+        ``source.profile`` is stamped from ``profile_routes`` instead of
+        collapsing into ``agent:main``. When the runner is not attached
+        (reconnect / unit tests), fall back to ``build_session_key`` with
+        whatever stamp is already on the source.
+        """
+        runner = getattr(self, "gateway_runner", None)
+        resolve = getattr(runner, "_session_key_for_source", None)
+        if callable(resolve):
+            try:
+                key = resolve(event.source)
+            except Exception:
+                key = None
+            if isinstance(key, str) and key:
+                return key
         extra = self.config.extra
         return build_session_key(
-            event.source, group_sessions_per_user=extra.get("group_sessions_per_user", True),
+            event.source,
+            group_sessions_per_user=extra.get("group_sessions_per_user", True),
             thread_sessions_per_user=extra.get("thread_sessions_per_user", False),
-            profile=self._session_key_profile(event.source))
+            profile=self._session_key_profile(event.source),
+        )
 
     def _text_batch_key(self, event: "MessageEvent") -> str:
         """Session-scoped key for text batching (subclasses may override)."""

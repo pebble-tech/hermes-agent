@@ -939,10 +939,8 @@ class WeixinAdapter(BasePlatformAdapter):
         return True
 
     def _text_batch_key(self, event: MessageEvent) -> str:
-        from gateway.session import build_session_key
-        return build_session_key(
-            event.source, group_sessions_per_user=self.config.extra.get("group_sessions_per_user", True),
-            thread_sessions_per_user=self.config.extra.get("thread_sessions_per_user", False), profile=event.source.profile)
+        """Session-scoped key for text message batching."""
+        return self._event_session_key(event)
 
     async def _flush_text_batch(self, key: str) -> None:
         current_task = asyncio.current_task()

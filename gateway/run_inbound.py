@@ -131,17 +131,7 @@ class GatewayInboundMixin:
         # SessionSource directly, so resolve those here as the shared fail-closed ingress gate.
         # Strict boolean marker: require the literal True so duck-typed test/internal sources with
         # dynamic attributes are not mistaken for a rejection.
-        if (
-            getattr(_config, "multiplex_profiles", False)
-            and not getattr(source, "profile", None)
-            and getattr(source, "profile_route_rejected", False) is not True
-        ):
-            from gateway.profile_routing import ProfileRouteRejected
-
-            try:
-                source.profile = self._profile_name_for_source(source)
-            except ProfileRouteRejected:
-                source.profile_route_rejected = True
+        self._ensure_source_profile(source)
         if getattr(source, "profile_route_rejected", False) is True:
             logger.warning(
                 "Dropping inbound message because its explicit profile route "

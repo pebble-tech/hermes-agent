@@ -1270,26 +1270,7 @@ class GatewayTurnMixin:
         if not source.platform or source.platform in (Platform.LOCAL, Platform.WEBHOOK):
             return
         platform_name = source.platform.value
-        env_key = _home_target_env_var(platform_name)
-        # Multiplex: the home channel may live only in the profile secret scope, not os.environ.
-        home_env = ""
-        if env_key:
-            with suppress(Exception):
-                from agent.secret_scope import get_secret
-                home_env = (get_secret(env_key) or "").strip()
-            home_env = home_env or (os.getenv(env_key) or "").strip()
-        # Also honor in-memory / yaml home_channel on this platform.
-        with suppress(Exception):
-            if not home_env and self.config.get_home_channel(source.platform):
-                home_env = "set"
-        # Secondary-profile platforms may only exist under that profile's config — re-read in scope.
-        if not home_env:
-            with suppress(Exception):
-                from gateway.config import load_gateway_config as _lgc
-                prof = (getattr(source, "profile", None) or "").strip()
-                if prof and prof != "default" and _lgc().get_home_channel(source.platform):
-                    home_env = "set"
-        if not home_env:
+        if not self._home_channel_configured_for_source(source):
             # Slack routes every command through the parent `/hermes`; bare `/sethome` would fail.
             sethome_cmd = "/hermes sethome" if source.platform == Platform.SLACK else "/sethome"
             await self._deliver_platform_notice(

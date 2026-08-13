@@ -2798,6 +2798,11 @@ class FeishuAdapter(BasePlatformAdapter):
         return True
 
     # --- Text batching ---
+
+    def _text_batch_key(self, event: MessageEvent) -> str:
+        """Return the session-scoped key used for Feishu text aggregation."""
+        return self._event_session_key(event)
+
     @staticmethod
     def _text_batch_is_compatible(existing: MessageEvent, incoming: MessageEvent) -> bool:
         """Only merge text events when reply/thread context is identical."""
