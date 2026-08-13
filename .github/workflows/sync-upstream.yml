@@ -98,7 +98,8 @@ env:
   # - fix/whatsapp-profile-route-identity is independent (PR #85081).
   # - fix/multiplex-secondary-mcp-discovery is independent (PR #85204).
   # - fix/multiplex-session-profile-fence is independent (PR #85205).
-  FEATURE_BRANCHES: "fix/busy-path-pre-gateway-dispatch-upstream feature/end-turn-tool-contract-upstream fix/diagnostic-status-leak-and-end-turn-nudge fix/queued-followup-media-delivery-upstream fix/undelivered-tool-call-content fix/telegram-forum-topic-reply-anchor fix/whatsapp-profile-route-identity fix/multiplex-secondary-mcp-discovery fix/multiplex-session-profile-fence"
+  # - fix/multiplex-slash-command-profile-keying is independent (PR #85350).
+  FEATURE_BRANCHES: "fix/busy-path-pre-gateway-dispatch-upstream feature/end-turn-tool-contract-upstream fix/diagnostic-status-leak-and-end-turn-nudge fix/queued-followup-media-delivery-upstream fix/undelivered-tool-call-content fix/telegram-forum-topic-reply-anchor fix/whatsapp-profile-route-identity fix/multiplex-secondary-mcp-discovery fix/multiplex-session-profile-fence fix/multiplex-slash-command-profile-keying"
   PLUGIN_REPO: pebble-tech/hermes-plugin-gateway-policy
   # Workflows kept on rebuilt integration `main`. Everything else inherited from
   # upstream is stripped before push so Nous CI/publish/autofix does not re-run
