@@ -29,12 +29,10 @@ name: Sync upstream
 #   fix/whatsapp-profile-route-identity → #85081 match WhatsApp profile_routes
 #   across JID/LID/number alias forms (open).
 #
-#   feat/update-ref → #89000 hermes update --ref pin to a git tag or commit
-#   (open).
-#
-#   feat/update-no-restart-carry → integration source for #89141
-#   (--no-restart). Nous PR head stays feat/update-no-restart. Stacked on
-#   feat/update-ref so the update usage line lists both flags.
+#   feat/update-no-restart-carry → stacked tip for #89000 (--ref) plus
+#   #89141 (--no-restart). List only this tip; cherry-picking the range
+#   brings in feat/update-ref once. Nous PR heads stay feat/update-ref
+#   and feat/update-no-restart.
 #
 #   #18413 OpenCode auxiliary /v1 strip (was fix/auxiliary-opencode-strip-
 #   trailing-v1) closed without merge — shared Anthropic client strips
@@ -106,11 +104,9 @@ env:
   # - fix/multiplex-secondary-mcp-discovery is independent (PR #85204).
   # - fix/multiplex-session-profile-fence is independent (PR #85205).
   # - fix/multiplex-slash-cmd-profile-stamp is independent (PR #85355).
-  # - feat/update-ref is independent (PR #89000).
-  # - feat/update-ref carries --ref and --no-restart (PR #89000 + stacked no-restart).
-  #   feat/update-no-restart-carry dropped 2026-08-18 — redundant stacked replay
-  #   after feat/update-ref cherry-pick (empty cherry-pick on integration main).
-  FEATURE_BRANCHES: "fix/busy-path-pre-gateway-dispatch-upstream feature/end-turn-tool-contract-upstream fix/diagnostic-status-leak-and-end-turn-nudge fix/queued-followup-media-delivery-upstream fix/undelivered-tool-call-content fix/telegram-forum-topic-reply-anchor fix/whatsapp-profile-route-identity fix/multiplex-secondary-mcp-discovery fix/multiplex-session-profile-fence fix/multiplex-slash-cmd-profile-stamp feat/update-ref"
+  # - feat/update-no-restart-carry is the stacked tip for #89000 and #89141
+  #   (Nous PR heads remain feat/update-ref and feat/update-no-restart).
+  FEATURE_BRANCHES: "fix/busy-path-pre-gateway-dispatch-upstream feature/end-turn-tool-contract-upstream fix/diagnostic-status-leak-and-end-turn-nudge fix/queued-followup-media-delivery-upstream fix/undelivered-tool-call-content fix/telegram-forum-topic-reply-anchor fix/whatsapp-profile-route-identity fix/multiplex-secondary-mcp-discovery fix/multiplex-session-profile-fence fix/multiplex-slash-cmd-profile-stamp feat/update-no-restart-carry"
   PLUGIN_REPO: pebble-tech/hermes-plugin-gateway-policy
   # Workflows kept on rebuilt integration `main`. Everything else inherited from
   # upstream is stripped before push so Nous CI/publish/autofix does not re-run
