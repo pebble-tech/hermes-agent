@@ -34,6 +34,9 @@ name: Sync upstream
 #   brings in feat/update-ref once. Nous PR heads stay feat/update-ref
 #   and feat/update-no-restart.
 #
+#   feat/compression-summary-instructions → #89399 configurable
+#   compression.summary_instructions (open).
+#
 #   #18413 OpenCode auxiliary /v1 strip (was fix/auxiliary-opencode-strip-
 #   trailing-v1) closed without merge — shared Anthropic client strips
 #   trailing /v1 (85e6232a0, in v2026.6.19). Dropped 2026-07-23.
@@ -106,7 +109,8 @@ env:
   # - fix/multiplex-slash-cmd-profile-stamp is independent (PR #85355).
   # - feat/update-no-restart-carry is the stacked tip for #89000 and #89141
   #   (Nous PR heads remain feat/update-ref and feat/update-no-restart).
-  FEATURE_BRANCHES: "fix/busy-path-pre-gateway-dispatch-upstream feature/end-turn-tool-contract-upstream fix/diagnostic-status-leak-and-end-turn-nudge fix/queued-followup-media-delivery-upstream fix/undelivered-tool-call-content fix/telegram-forum-topic-reply-anchor fix/whatsapp-profile-route-identity fix/multiplex-secondary-mcp-discovery fix/multiplex-session-profile-fence fix/multiplex-slash-cmd-profile-stamp feat/update-no-restart-carry"
+  # - feat/compression-summary-instructions is independent (PR #89399).
+  FEATURE_BRANCHES: "fix/busy-path-pre-gateway-dispatch-upstream feature/end-turn-tool-contract-upstream fix/diagnostic-status-leak-and-end-turn-nudge fix/queued-followup-media-delivery-upstream fix/undelivered-tool-call-content fix/telegram-forum-topic-reply-anchor fix/whatsapp-profile-route-identity fix/multiplex-secondary-mcp-discovery fix/multiplex-session-profile-fence fix/multiplex-slash-cmd-profile-stamp feat/update-no-restart-carry feat/compression-summary-instructions"
   PLUGIN_REPO: pebble-tech/hermes-plugin-gateway-policy
   # Workflows kept on rebuilt integration `main`. Everything else inherited from
   # upstream is stripped before push so Nous CI/publish/autofix does not re-run
