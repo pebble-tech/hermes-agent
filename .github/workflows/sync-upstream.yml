@@ -107,9 +107,10 @@ env:
   # - fix/multiplex-session-profile-fence is independent (PR #85205).
   # - fix/multiplex-slash-cmd-profile-stamp is independent (PR #85355).
   # - feat/update-ref is independent (PR #89000).
-  # - feat/update-no-restart-carry is the integration source for #89141
-  #   (Nous PR head remains feat/update-no-restart).
-  FEATURE_BRANCHES: "fix/busy-path-pre-gateway-dispatch-upstream feature/end-turn-tool-contract-upstream fix/diagnostic-status-leak-and-end-turn-nudge fix/queued-followup-media-delivery-upstream fix/undelivered-tool-call-content fix/telegram-forum-topic-reply-anchor fix/whatsapp-profile-route-identity fix/multiplex-secondary-mcp-discovery fix/multiplex-session-profile-fence fix/multiplex-slash-cmd-profile-stamp feat/update-ref feat/update-no-restart-carry"
+  # - feat/update-ref carries --ref and --no-restart (PR #89000 + stacked no-restart).
+  #   feat/update-no-restart-carry dropped 2026-08-18 — redundant stacked replay
+  #   after feat/update-ref cherry-pick (empty cherry-pick on integration main).
+  FEATURE_BRANCHES: "fix/busy-path-pre-gateway-dispatch-upstream feature/end-turn-tool-contract-upstream fix/diagnostic-status-leak-and-end-turn-nudge fix/queued-followup-media-delivery-upstream fix/undelivered-tool-call-content fix/telegram-forum-topic-reply-anchor fix/whatsapp-profile-route-identity fix/multiplex-secondary-mcp-discovery fix/multiplex-session-profile-fence fix/multiplex-slash-cmd-profile-stamp feat/update-ref"
   PLUGIN_REPO: pebble-tech/hermes-plugin-gateway-policy
   # Workflows kept on rebuilt integration `main`. Everything else inherited from
   # upstream is stripped before push so Nous CI/publish/autofix does not re-run
