@@ -32,8 +32,9 @@ name: Sync upstream
 #   feat/update-ref → #89000 hermes update --ref pin to a git tag or commit
 #   (open).
 #
-#   feat/update-no-restart → #89141 hermes update --no-restart skip fleet
-#   gateway restart after a successful update (open).
+#   feat/update-no-restart-carry → integration source for #89141
+#   (--no-restart). Nous PR head stays feat/update-no-restart. Stacked on
+#   feat/update-ref so the update usage line lists both flags.
 #
 #   #18413 OpenCode auxiliary /v1 strip (was fix/auxiliary-opencode-strip-
 #   trailing-v1) closed without merge — shared Anthropic client strips
@@ -106,8 +107,9 @@ env:
   # - fix/multiplex-session-profile-fence is independent (PR #85205).
   # - fix/multiplex-slash-cmd-profile-stamp is independent (PR #85355).
   # - feat/update-ref is independent (PR #89000).
-  # - feat/update-no-restart is independent (PR #89141).
-  FEATURE_BRANCHES: "fix/busy-path-pre-gateway-dispatch-upstream feature/end-turn-tool-contract-upstream fix/diagnostic-status-leak-and-end-turn-nudge fix/queued-followup-media-delivery-upstream fix/undelivered-tool-call-content fix/telegram-forum-topic-reply-anchor fix/whatsapp-profile-route-identity fix/multiplex-secondary-mcp-discovery fix/multiplex-session-profile-fence fix/multiplex-slash-cmd-profile-stamp feat/update-ref feat/update-no-restart"
+  # - feat/update-no-restart-carry is the integration source for #89141
+  #   (Nous PR head remains feat/update-no-restart).
+  FEATURE_BRANCHES: "fix/busy-path-pre-gateway-dispatch-upstream feature/end-turn-tool-contract-upstream fix/diagnostic-status-leak-and-end-turn-nudge fix/queued-followup-media-delivery-upstream fix/undelivered-tool-call-content fix/telegram-forum-topic-reply-anchor fix/whatsapp-profile-route-identity fix/multiplex-secondary-mcp-discovery fix/multiplex-session-profile-fence fix/multiplex-slash-cmd-profile-stamp feat/update-ref feat/update-no-restart-carry"
   PLUGIN_REPO: pebble-tech/hermes-plugin-gateway-policy
   # Workflows kept on rebuilt integration `main`. Everything else inherited from
   # upstream is stripped before push so Nous CI/publish/autofix does not re-run
@@ -216,14 +218,33 @@ jobs:
           for branch in $FEATURE_BRANCHES; do
             echo "::group::Cherry-pick $branch"
             if ! git cherry-pick "upstream/main..$branch"; then
-              bash .github/scripts/record-sync-failure.sh cherry-pick-main "$branch"
-              {
-                echo "::error::Conflict cherry-picking $branch into $INTEGRATION_BRANCH"
-                echo "Conflicted files:"
-                git diff --name-only --diff-filter=U
-              } | tee "/tmp/${branch//\//-}-cherrypick-conflict.txt"
-              git cherry-pick --abort || true
-              exit 1
+              # Stacked later branches include earlier FEATURE_BRANCHES
+              # commits. Skip those empty replays; fail on real conflicts.
+              cherry_head=$(git rev-parse --git-path CHERRY_PICK_HEAD)
+              while [ -f "$cherry_head" ]; do
+                conflicts=$(git diff --name-only --diff-filter=U)
+                if [ -n "$conflicts" ]; then
+                  break
+                fi
+                if git diff --quiet && git diff --cached --quiet; then
+                  echo "skip empty $(git rev-parse --short CHERRY_PICK_HEAD) on $branch (already applied)"
+                  if ! git cherry-pick --skip; then
+                    break
+                  fi
+                  continue
+                fi
+                break
+              done
+              if [ -f "$cherry_head" ]; then
+                bash .github/scripts/record-sync-failure.sh cherry-pick-main "$branch"
+                {
+                  echo "::error::Conflict cherry-picking $branch into $INTEGRATION_BRANCH"
+                  echo "Conflicted files:"
+                  git diff --name-only --diff-filter=U
+                } | tee "/tmp/${branch//\//-}-cherrypick-conflict.txt"
+                git cherry-pick --abort || true
+                exit 1
+              fi
             fi
             echo "::endgroup::"
           done
