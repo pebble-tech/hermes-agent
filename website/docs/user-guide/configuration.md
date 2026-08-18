@@ -1039,6 +1039,7 @@ compression:
   proactive_prune_tokens: 0                         # Opt-in tokens trigger for the no-LLM tool-result prune (0 = off; see below)
   proactive_prune_min_result_chars: 8000            # Prune's summarize pass only touches tool results larger than this (clamped >= 200)
   proactive_prune_min_reclaim_tokens: 4096          # Prune only commits when it reclaims at least this many tokens (0 = commit any)
+  summary_instructions: ""                          # Optional extra summarizer guidance. Empty = default Hermes "Be CONCRETE" sentence. When set, replaces that sentence on batch compact and is appended after the NEVER/[REDACTED] block on micro-compact. Inserted verbatim.
 
 # The summarization model/provider is configured under auxiliary:
 auxiliary:
@@ -1083,6 +1084,15 @@ The value is the **first rung** of an escalating ladder, not a fixed interval: c
 `prepare_ahead` (default `false`) writes the next compaction summary in the background once the session is close to the trigger, while tools run and between turns. One summary is prepared per compaction. When automatic compaction fires and the summarized messages are still the same messages (text edits by plugins are fine; a dropped message or a rewind is not), the prepared summary is used instead of a summary call at that moment, and every message newer than it stays outside it, in the uncompressed tail. If the prepared summary is still being written when compaction fires, compaction waits for it (within the usual compression time limit) rather than writing it again. If there is no prepared summary or it no longer matches, compaction runs exactly as it does without the option. It spends an auxiliary summary call that may go unused, and it does not apply to manual `/compress`, plugin context engines, or native/app-server compaction. With a memory provider that adds context to compaction summaries it switches itself off after the first compaction, since every prepared summary would be discarded.
 
 `proactive_prune_tokens` enables a deterministic, no-LLM prune of old tool-result payloads that runs independently of `threshold`. On large-window models the `threshold` compaction (≈50% of the window) rarely fires, so bulky tool outputs (terminal dumps, file reads, web extracts) ride along in history and get re-sent on every subsequent turn. When re-sent history exceeds `proactive_prune_tokens` (default `0` = off; try `48000` to enable), the prune dedupes identical results and summarizes older oversized tool results, protecting the most recent `protect_last_n` messages and never calling the model. Tool-call arguments are execution records and are never rewritten by pruning; the summary model has a separate bounded serializer for copies included in its prompt. The pressure pass likewise demotes tool-result bodies only. During full semantic compaction the carried head/tail rows keep those tool-result demotions (so an oversized tail can still compress), while tool-call arguments stay byte-exact. The opt-in proactive prune still commits eligible tool-result-body demotions, so `proactive_prune_min_reclaim_tokens` (default `4096`) keeps those cache-breaking commits episodic; `proactive_prune_min_result_chars` (default `8000`, clamped to ≥ 200) sets the size below which a tool result is left untouched. This runs only under the built-in `compressor` engine; other context engines inherit a no-op.
+
+`summary_instructions` (default `""`) replaces the batch summarizer's `Be CONCRETE ...` sentence with the configured string, and appends the same string after the NEVER/[REDACTED] block on micro-compact. Empty, whitespace-only, `null`, and non-string values keep the current Hermes text. The value is inserted verbatim: braces are not interpolated. Example:
+
+```yaml
+compression:
+  summary_instructions: |
+    Preserve ticket IDs, file paths, and exact error text.
+    Omit promotional offers and prices.
+```
 
 :::tip Gateway hot-reload of compression and context length
 As of recent releases, editing `model.context_length` or any `compression.*` key in `config.yaml` on a running gateway takes effect on the next message — no gateway restart, no `/reset`, no session rotation required. The cached-agent signature includes these keys, so the gateway transparently rebuilds the agent when it sees a change. API keys and tool/skill config still require the usual reload paths.
