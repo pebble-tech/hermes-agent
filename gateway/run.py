@@ -4091,6 +4091,15 @@ class GatewayRunner(
         # True keeps CLI/unknown paths working; stateless adapters (api_server) declare False.
         _adapter = (getattr(self, "adapters", None) or {}).get(context.source.platform)
         _async_delivery = getattr(_adapter, "supports_async_delivery", True)
+        # Multiplex remaps get_hermes_home() per turn. TERMINAL_CWD is bridged
+        # once from the default profile at process start, so secondary-profile
+        # turns would otherwise inject that profile's AGENTS.md.
+        cwd = ""
+        if getattr(getattr(self, "config", None), "multiplex_profiles", False):
+            try:
+                cwd = str(get_hermes_home())
+            except Exception:
+                cwd = ""
         return set_session_vars(
             platform=context.source.platform.value,
             chat_id=context.source.chat_id,
@@ -4104,6 +4113,7 @@ class GatewayRunner(
             session_key=context.session_key,
             message_id=str(context.source.message_id) if context.source.message_id else "",
             profile=getattr(context.source, "profile", "") or "",
+            cwd=cwd,
             async_delivery=_async_delivery,
             cron_session="")
 
