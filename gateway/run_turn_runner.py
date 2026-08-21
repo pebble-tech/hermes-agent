@@ -478,8 +478,9 @@ class TurnRunner(GatewayTurnProgressMixin, GatewaySessionAgentMixin):
         agent.stream_delta_callback = stream_delta_cb
         agent.interim_assistant_callback = interim_assistant_cb if want_interim_messages else None
         from gateway.run_turn_progress import local_viewer_turn
-        agent.status_callback = ctx._status_callback_sync if ctx._diagnostic_status_enabled else None
-        agent.notice_callback = (
+        # Always wire the callback. Recovery-class statuses are filtered in
+        # ``_prepare_gateway_status_message`` when diagnostic_status is off.
+        agent.status_callback, agent.notice_callback = ctx._status_callback_sync, (
             self._local_notice_callback_sync if local_viewer_turn(self) else self._notice_callback_sync)
         agent.reasoning_callback = None  # per turn: a reused agent never keeps an earlier API turn's sink
         if self._approval_owner is not None:
