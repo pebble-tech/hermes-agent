@@ -981,7 +981,12 @@ class GatewayTurnProgressMixin:
         ctx = self._ctx
         if ctx.mute_notification_reply or not self._status_live():
             return
-        prepared = _prepare_gateway_status_message(ctx.source.platform, event_type, message)
+        prepared = _prepare_gateway_status_message(
+            ctx.source.platform,
+            event_type,
+            message,
+            diagnostic_status="all" if ctx._diagnostic_status_enabled else "off",
+        )
         if prepared is None:
             logger.debug(
                 "status_callback suppressed for %s/%s: %s",
