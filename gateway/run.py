@@ -714,11 +714,36 @@ def _sanitize_gateway_final_response(platform: Any, text: str) -> str:
     return redacted
 
 
-def _prepare_gateway_status_message(platform: Any, event_type: str, message: str, chat_type: Any = "dm") -> Optional[str]:
+_RECOVERY_STATUS_RE = re.compile(
+    r"("
+    r"model returned empty after tool calls.{0,80}nudging to continue"
+    r"|thinking-only response.{0,80}prefilling to continue"
+    r")",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def _is_recovery_status(event_type: str, text: str) -> bool:
+    """True for recovery-class statuses (empty-after-tools nudge, thinking prefill)."""
+    if str(event_type or "").strip().lower() == "recovery":
+        return True
+    return bool(_RECOVERY_STATUS_RE.search(text))
+
+
+def _prepare_gateway_status_message(
+    platform: Any,
+    event_type: str,
+    message: str,
+    chat_type: Any = "dm",
+    *,
+    diagnostic_status: str = "all",
+) -> Optional[str]:
     """Filter/sanitize agent status callbacks before platform delivery.
 
     Local/CLI keep the raw diagnostic stream; messaging surfaces drop transient aux/compression noise, and
-    non-DM chats drop DM-only warnings (gateway/run_status_filter.py)."""
+    non-DM chats drop DM-only warnings (gateway/run_status_filter.py).
+    Recovery-class statuses are gated by ``display.diagnostic_status`` (default ``all``); lifecycle and
+    warning events still deliver."""
     text = str(message or "").strip()
     if not text:
         return None
@@ -728,6 +753,12 @@ def _prepare_gateway_status_message(platform: Any, event_type: str, message: str
         return None
 
     text = _redact_gateway_user_facing_secrets(text)
+    resolved_diagnostic = str(diagnostic_status or "all").strip().lower()
+    if (
+        _is_recovery_status(event_type, text)
+        and resolved_diagnostic in {"off", "false", "0", "no"}
+    ):
+        return None
     # Opt-in `compression.progress_notices` lets ROUTINE (template-derived) progress through; other noise stays.
     if _TELEGRAM_NOISY_STATUS_RE.search(text) and not (
         _gateway_compression_progress_notices_enabled() and _COMPRESSION_PROGRESS_STATUS_RE.search(text)
