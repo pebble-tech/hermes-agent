@@ -1125,7 +1125,7 @@ compression:
   proactive_prune_tokens: 0                         # Tokens trigger for the no-LLM tool-result prune (0 = off; see below)
   proactive_prune_min_result_chars: 8000            # Prune's summarize pass only touches tool results larger than this (clamped >= 200)
   proactive_prune_min_reclaim_tokens: 4096          # Prune only commits when it reclaims at least this many tokens (0 = commit any)
-  summary_instructions: ""                          # Optional extra summarizer guidance. Empty = default Hermes "Be CONCRETE" sentence. When set, replaces that sentence on batch compact and is appended after the NEVER/[REDACTED] block on micro-compact. Inserted verbatim.
+  summary_instructions: ""                          # Optional summarizer outcome instructions. Empty = default Hermes structured compact template (Goal / Session Log sections and Be CONCRETE sentence). When set, replaces that entire batch template and the micro merge-structure prose. Inserted verbatim.
 
 # The summarization model/provider is configured under auxiliary:
 auxiliary:
@@ -1177,7 +1177,7 @@ The value is the **first rung** of an escalating ladder, not a fixed interval: c
 
 Archive files follow the spillover rules: a file is kept while any `state.db` row still points at it and is otherwise swept after `sessions.retention_days`. Rows keep pointing at it after a compaction (as inactive rows), so a referenced archive stays on disk until its session is deleted, and `sessions.auto_prune` is off by default: without it, archives are never removed. The prune never runs when `compression.checkpoint_required` is on (also after a live config change) or when the session has no store row to archive the originals into. This runs only under the built-in `compressor` engine; other context engines inherit a no-op.
 
-`summary_instructions` (default `""`) replaces the batch summarizer's `Be CONCRETE ...` sentence with the configured string, and appends the same string after the NEVER/[REDACTED] block on micro-compact. Empty, whitespace-only, `null`, and non-string values keep the current Hermes text. The value is inserted verbatim: braces are not interpolated. Example:
+`summary_instructions` (default `""`) replaces the batch summarizer's structured compact template (Goal / Session Log sections and the default `Be CONCRETE ...` sentence) with the configured string, and replaces the micro-compact merge-structure paragraph with the same string. Empty, whitespace-only, `null`, and non-string values keep the current Hermes text. The value is inserted verbatim: braces are not interpolated. Example:
 
 ```yaml
 compression:
