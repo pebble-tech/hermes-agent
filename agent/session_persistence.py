@@ -544,7 +544,6 @@ class SessionPersistenceMixin:
         while tail(
             "_empty_recovery_synthetic",
             "_empty_terminal_sentinel",
-            "_undelivered_interim_synthetic",
         ):
             messages.pop()
 
