@@ -330,7 +330,7 @@ jobs:
           if ! python -m pytest \
             tests/gateway/test_pre_gateway_dispatch.py \
             tests/gateway/test_session.py \
-            tests/gateway/test_telegram_plugin_callback_handlers.py \
+            tests/gateway/test_telegram_send_reply_markup.py \
             tests/hermes_cli/test_plugins.py \
             -q --tb=short; then
             bash .github/scripts/record-sync-failure.sh focused-tests "$INTEGRATION_BRANCH"
