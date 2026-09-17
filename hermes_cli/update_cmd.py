@@ -1270,8 +1270,7 @@ def _apply_pulled_update(
     # completed restart leaves this marker so the next update catches up even when git is
     # current. Distinct from ``.update-incomplete`` (venv/install repair).
     # See #95294.
-    if not opts.no_gateway_restart:
-        _write_fleet_restart_pending_marker(expected_sha=post_pull_sha or "")
+    _write_fleet_restart_pending_marker(expected_sha=post_pull_sha or "")
     # Stale .pyc would ImportError on gateway restart when new source references new names.
     _sweep_bytecode_after_update(branch)
 
