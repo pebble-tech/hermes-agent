@@ -26,6 +26,7 @@ A scheduled GitHub Actions workflow ([`.github/workflows/sync-upstream.yml`](.gi
 7. Runs focused tests:
    - `tests/gateway/test_pre_gateway_dispatch.py` (regression for the hook contract our gateway-policy plugin depends on)
    - `tests/gateway/test_session.py` (regression for WhatsApp canonical session keying)
+   - `tests/gateway/test_telegram_send_reply_markup.py` (regression for plugin send markup via #96053)
    - `tests/hermes_cli/test_plugins.py`
 8. Clones `pebble-tech/hermes-plugin-gateway-policy` and runs its test suite (smoke-test catches plugin-side drift).
 9. On success → `push --force-with-lease` every source branch and `main`.
@@ -56,8 +57,12 @@ git fetch upstream
 # Identify failed_branch from the issue sync-failure block, then:
 git checkout <branch>              # ops-overlay or feature/*
 git rebase upstream/main           # resolve conflicts, or drop branch if upstream absorbed it
+uv python install 3.14
+uv sync --locked --python 3.14 --extra all --group dev
+source .venv/bin/activate
 python -m pytest tests/gateway/test_pre_gateway_dispatch.py \
                  tests/gateway/test_session.py \
+                 tests/gateway/test_telegram_send_reply_markup.py \
                  tests/hermes_cli/test_plugins.py -q
 git push --force-with-lease origin <branch>
 gh workflow run sync-upstream.yml --repo pebble-tech/hermes-agent --ref main
