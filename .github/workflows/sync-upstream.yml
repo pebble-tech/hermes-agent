@@ -298,12 +298,6 @@ jobs:
           fi
           echo "::endgroup::"
 
-      - name: Set up Python 3.11
-        if: inputs.skip_tests != 'true'
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
       - name: Install uv
         if: inputs.skip_tests != 'true'
         uses: astral-sh/setup-uv@v5
@@ -315,9 +309,10 @@ jobs:
       - name: Install hermes-agent (from integration branch)
         if: inputs.skip_tests != 'true'
         run: |
-          uv venv .venv --python 3.11
-          source .venv/bin/activate
-          uv pip install -e ".[all,dev]"
+          # Upstream moved dev deps to [dependency-groups]; `.[all,dev]` no longer
+          # installs pytest. Match upstream CI: locked sync on Python 3.14.
+          uv python install 3.14
+          uv sync --locked --python 3.14 --extra all --group dev
 
       - name: Run focused tests against integration branch
         if: inputs.skip_tests != 'true'
