@@ -88,13 +88,14 @@ whose commits fail tests after rebase). Run the same focused tests locally.
 ## Focused tests (match CI)
 
 ```bash
-uv venv .venv --python 3.11
+uv python install 3.14
+uv sync --locked --python 3.14 --extra all --group dev
 source .venv/bin/activate
-uv pip install -e ".[all,dev]"
 sudo apt-get update && sudo apt-get install -y ripgrep   # Linux CI only
 python -m pytest \
   tests/gateway/test_pre_gateway_dispatch.py \
   tests/gateway/test_session.py \
+  tests/gateway/test_telegram_send_reply_markup.py \
   tests/hermes_cli/test_plugins.py \
   -q --tb=short
 ```
