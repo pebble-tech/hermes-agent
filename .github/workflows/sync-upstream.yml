@@ -127,7 +127,8 @@ env:
   #   onto upstream/main. feat/update-no-restart-carry dropped (stack conflict).
   # - feat/compression-summary-instructions is independent (PR #89399).
   # - feat/telegram-plugin-callback-handlers is independent (PR #96053).
-  FEATURE_BRANCHES: "fix/busy-path-pre-gateway-dispatch-upstream feature/end-turn-tool-contract-upstream fix/diagnostic-status-leak-and-end-turn-nudge fix/undelivered-tool-call-content fix/telegram-forum-topic-reply-anchor feat/update-ref feat/compression-summary-instructions feat/telegram-plugin-callback-handlers"
+  # - fix/opencode-go-reasoning-effort-coverage is independent (PR #126103).
+  FEATURE_BRANCHES: "fix/busy-path-pre-gateway-dispatch-upstream feature/end-turn-tool-contract-upstream fix/diagnostic-status-leak-and-end-turn-nudge fix/undelivered-tool-call-content fix/telegram-forum-topic-reply-anchor feat/update-ref feat/compression-summary-instructions feat/telegram-plugin-callback-handlers fix/opencode-go-reasoning-effort-coverage"
   PLUGIN_REPO: pebble-tech/hermes-plugin-gateway-policy
   # Workflows kept on rebuilt integration `main`. Everything else inherited from
   # upstream is stripped before push so Nous CI/publish/autofix does not re-run
