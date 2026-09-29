@@ -97,7 +97,7 @@ The resolve step then:
 - refuses if that tag points elsewhere, if a release already exists on it, or if more than one tag matches the commit;
 - otherwise tries to create the tag itself, and on a 403 fails with the `git push` command to run.
 
-Publishing only creates the release on the existing tag (`gh release create --verify-tag`); it never creates a ref. Just before creating the release it checks the tag again: if the tag moved off the commit or gained a release during the build, nothing is published. If the tag moves in the seconds between that check and the create, the release is deleted again and the run fails; the tag stays for the operator.
+Publishing only creates the release on the existing tag (`gh release create --verify-tag`); it never creates a ref. Just before creating the release it checks the tag again: if the tag moved off the commit or gained a release during the build, nothing is published. If the tag moves in the seconds between that check and the create, the run deletes its own release by id and fails; the tag stays for the operator. It recognises its release by the run-attempt line in the notes, and if it cannot, it deletes nothing and asks for a check by hand.
 
 ## Consuming this fork
 
