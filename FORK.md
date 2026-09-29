@@ -78,7 +78,26 @@ Close the open `sync-failure` issue after the next sync succeeds.
 - The release is tagged `<prefix>/<YYYYMMDD>-<sha12>` on the pinned commit, which also keeps that commit from garbage collection. Assets: `hermes-sealed-<sha>-linux-x64.tar.gz` (top directory `<sha>/`) and `checksums.txt`.
 - A second job downloads the published asset on a clean runner and checks the layout, then runs `bin/hermes --version`, the key imports and the bundled tools as a non-root user with the tree read-only, lazy installs disabled and no network.
 
-Use the `deploy-test` prefix for trial runs; it is allowed from any branch. The `deploy` prefix is refused unless the run is a manual dispatch on `main`, so a production release is always built by reviewed code. A commit that already has a release under the chosen prefix is refused.
+Use the `deploy-test` prefix for trial runs; it is allowed from any branch. The `deploy` prefix is refused unless the run is a manual dispatch on `main`, so a production release is always built by reviewed code.
+
+### Tagging a release
+
+The workflow's `GITHUB_TOKEN` has no `workflows` permission, so GitHub refuses it a new tag on a commit whose `.github/workflows` differ from `main`. That is true of almost every older pin, so **the operator pushes the tag before dispatching**:
+
+```bash
+sha=<sha40>
+tag="deploy/$(date -u +%Y%m%d)-${sha:0:12}"
+git push origin "$sha:refs/tags/$tag"
+gh workflow run sealed-release.yml --ref main -f sha="$sha" -f tag_prefix=deploy
+```
+
+The resolve step then:
+
+- uses an existing `<prefix>/<YYYYMMDD>-<sha12>` tag if it points exactly at the commit (annotated tags are peeled) and has no release yet;
+- refuses if that tag points elsewhere, if a release already exists on it, or if more than one tag matches the commit;
+- otherwise tries to create the tag itself, and on a 403 fails with the `git push` command to run.
+
+Publishing only creates the release on the existing tag (`gh release create --verify-tag`); it never creates a ref.
 
 ## Consuming this fork
 
