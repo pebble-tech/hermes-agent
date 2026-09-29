@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Write .sync-failure.json for the sync-upstream workflow failure handler.
 # Usage: record-sync-failure.sh <failed_step> [failed_branch]
+# Writes to $GITHUB_WORKSPACE (where the issue step reads it), not the cwd:
+# the plugin smoke-test step runs from a separate clone.
 set -euo pipefail
 
 FAILED_STEP="${1:?failed_step required}"
@@ -25,6 +27,6 @@ jq -n \
     failed_branch: $failed_branch,
     upstream_sha: $upstream_sha,
     conflict_files: $conflict_files
-  }' > .sync-failure.json
+  }' > "${GITHUB_WORKSPACE:-.}/.sync-failure.json"
 
 echo "Recorded sync failure: step=$FAILED_STEP branch=$FAILED_BRANCH" >&2
