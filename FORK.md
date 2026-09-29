@@ -21,7 +21,7 @@ A scheduled GitHub Actions workflow ([`.github/workflows/sync-upstream.yml`](.gi
 2. Rebases `ops-overlay` onto `upstream/main`.
 3. Rebases each branch in `FEATURE_BRANCHES` onto `upstream/main`.
 4. Rebuilds `main` from scratch: checks out `upstream/main`, then cherry-picks `ops-overlay` followed by each feature branch's commits.
-5. Strips upstream GitHub Actions workflows from integration `main`, keeping only the `WORKFLOW_ALLOWLIST` (default: `sync-upstream.yml`, `test-cursor-webhook.yml`). This fork is a deploy target — Nous CI/publish/autofix should not re-run here; focused tests in this workflow are the gate.
+5. Strips upstream GitHub Actions workflows from integration `main`, keeping only the `WORKFLOW_ALLOWLIST` (default: `sync-upstream.yml`, `test-cursor-webhook.yml`, `sealed-release.yml`). This fork is a deploy target — Nous CI/publish/autofix should not re-run here; focused tests in this workflow are the gate.
 6. Installs `hermes-agent` from the rebuilt `main` via `uv`.
 7. Runs focused tests:
    - `tests/gateway/test_pre_gateway_dispatch.py` (regression for the hook contract our gateway-policy plugin depends on)
