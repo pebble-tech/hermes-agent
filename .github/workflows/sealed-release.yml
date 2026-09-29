@@ -1,0 +1,446 @@
+name: Sealed release
+
+# Builds a sealed, read-only Hermes release for one pinned commit and
+# publishes it as a GitHub release, then verifies the published asset in a
+# separate clean job.
+#
+# Recipe: upstream's native payload (scripts/bundles/native.py) from a
+# checkout of the pinned commit, driven by .github/scripts/sealed_release_build.py
+# (extras all+messaging, no shipped uv cache, WhatsApp bridge kept with
+# prebuilt node_modules, llamacpp-* and cua-driver left out of tools/). The tree is built at its final install path
+# /opt/hermes/releases/<sha>, so nothing is relocated.
+#
+# Release: tag <prefix>/<YYYYMMDD>-<sha12> on the pinned commit, with
+# hermes-sealed-<sha>-linux-x64.tar.gz (top dir <sha>/) and checksums.txt.
+# Use the deploy-test prefix for trial runs.
+
+on:
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: "Full 40-character commit to build"
+        required: true
+      tag_prefix:
+        description: "Release tag prefix"
+        required: true
+        type: choice
+        options:
+          - deploy-test
+          - deploy
+        default: deploy-test
+
+permissions: {}
+
+concurrency:
+  group: sealed-release-${{ inputs.sha }}
+  cancel-in-progress: false
+
+env:
+  RELEASES_ROOT: /opt/hermes/releases
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    permissions:
+      contents: write
+    outputs:
+      sha: ${{ steps.resolve.outputs.sha }}
+      tag: ${{ steps.resolve.outputs.tag }}
+    steps:
+      - name: Resolve commit and tag
+        id: resolve
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA_INPUT: ${{ inputs.sha }}
+          PREFIX_INPUT: ${{ inputs.tag_prefix }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          sha="$(printf '%s' "$SHA_INPUT" | tr -d '[:space:]')"
+          if ! [[ "$sha" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::sha must be a full 40-character lowercase commit, got '$sha'"
+            exit 1
+          fi
+          case "$PREFIX_INPUT" in
+            deploy|deploy-test) ;;
+            *) echo "::error::unknown tag prefix '$PREFIX_INPUT'"; exit 1 ;;
+          esac
+          # The builder script comes from the workflow ref. A deploy release
+          # must be built by reviewed code: the integration branch only.
+          if [ "$PREFIX_INPUT" = deploy ]; then
+            if [ "$GITHUB_EVENT_NAME" != workflow_dispatch ] || [ "$GITHUB_REF" != refs/heads/main ] \
+              || [ "$DEFAULT_BRANCH" != main ]; then
+              echo "::error::deploy releases are built only by workflow_dispatch on refs/heads/main (default branch '$DEFAULT_BRANCH'); this run is $GITHUB_EVENT_NAME on $GITHUB_REF"
+              exit 1
+            fi
+          fi
+          echo "guard: prefix $PREFIX_INPUT allowed for $GITHUB_EVENT_NAME on $GITHUB_REF"
+          resolved="$(gh api "repos/$GITHUB_REPOSITORY/commits/$sha" --jq .sha)"
+          if [ "$resolved" != "$sha" ]; then
+            echo "::error::commit $sha is not in $GITHUB_REPOSITORY"
+            exit 1
+          fi
+          existing="$(gh api "repos/$GITHUB_REPOSITORY/git/matching-refs/tags/$PREFIX_INPUT/" \
+            --jq ".[].ref | select(endswith(\"-${sha:0:12}\"))")"
+          if [ -n "$existing" ]; then
+            echo "::error::$sha already has a release tag: $existing"
+            exit 1
+          fi
+          day="$(date -u +%Y%m%d)"
+          tag="$PREFIX_INPUT/$day-${sha:0:12}"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "Building $sha as $tag"
+
+      # The build script, from the branch this workflow runs on.
+      - name: Checkout build script
+        uses: actions/checkout@v4
+        with:
+          path: builder
+          sparse-checkout: .github/scripts
+          fetch-depth: 1
+          persist-credentials: false
+
+      # Upstream's build tools at the pinned commit. native.py refuses a
+      # builder whose pm/lock.json differs from the target revision.
+      - name: Checkout pinned commit
+        uses: actions/checkout@v4
+        with:
+          path: source
+          ref: ${{ steps.resolve.outputs.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      # Everything the build reads or writes outside the checkouts lives
+      # under one directory, so the leak scan can name it exactly.
+      - name: Install host Python
+        run: |
+          build_dir="$RUNNER_TEMP/sealed-build"
+          mkdir -p "$build_dir"
+          UV_PYTHON_INSTALL_DIR="$build_dir/python" uv python install 3.14
+          echo "BUILD_DIR=$build_dir" >> "$GITHUB_ENV"
+          echo "HOST_PYTHON=$(UV_PYTHON_INSTALL_DIR="$build_dir/python" uv python find --managed-python 3.14)" >> "$GITHUB_ENV"
+
+      - name: Prepare release root
+        run: |
+          sudo mkdir -p "$RELEASES_ROOT"
+          sudo chown "$(id -u):$(id -g)" "$RELEASES_ROOT"
+          df -h / "$RUNNER_TEMP"
+
+      - name: Build sealed release
+        env:
+          SHA: ${{ steps.resolve.outputs.sha }}
+        run: |
+          "$HOST_PYTHON" -B builder/.github/scripts/sealed_release_build.py \
+            --source "$GITHUB_WORKSPACE/source" \
+            --sha "$SHA" \
+            --out "$RELEASES_ROOT/$SHA" \
+            --cache "$BUILD_DIR/uv-cache"
+          du -sh "$RELEASES_ROOT/$SHA"
+          du -sh "$RELEASES_ROOT/$SHA"/* | sort -h
+          du -sh "$RELEASES_ROOT/$SHA"/tools/* | sort -h
+          echo "unpacked bytes: $(du -sb "$RELEASES_ROOT/$SHA" | cut -f1)"
+
+      - name: Package
+        env:
+          SHA: ${{ steps.resolve.outputs.sha }}
+        run: |
+          set -euo pipefail
+          dist="$RUNNER_TEMP/dist"
+          mkdir -p "$dist"
+          asset="hermes-sealed-$SHA-linux-x64.tar.gz"
+          tar -C "$RELEASES_ROOT" --sort=name --owner=0 --group=0 --numeric-owner \
+            -czf "$dist/$asset" "$SHA"
+          (cd "$dist" && sha256sum "$asset" > checksums.txt)
+          cat "$dist/checksums.txt"
+          ls -l "$dist"
+          echo "DIST=$dist" >> "$GITHUB_ENV"
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ steps.resolve.outputs.sha }}
+          TAG: ${{ steps.resolve.outputs.tag }}
+        run: |
+          set -euo pipefail
+          flags=(--latest=false)
+          case "$TAG" in deploy/*) ;; *) flags+=(--prerelease) ;; esac
+          python3 - "$RELEASES_ROOT/$SHA/release.json" > "$RUNNER_TEMP/notes.md" <<'PY'
+          import json, sys
+          release = json.load(open(sys.argv[1]))
+          tools = ", ".join(f"{t['name']} {t['version']}" for t in release["tools"])
+          print(f"Sealed release of `{release['sha']}` for {release['target']}.\n")
+          print(f"- Python {release['python']}, extras: {', '.join(release['extras'])}")
+          print(f"- Tools: {tools}")
+          print(f"- Built {release['built_at']}")
+          PY
+          echo "- Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" >> "$RUNNER_TEMP/notes.md"
+          gh release create "$TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$SHA" \
+            --title "$TAG" \
+            --notes-file "$RUNNER_TEMP/notes.md" \
+            "${flags[@]}" \
+            "$DIST/hermes-sealed-$SHA-linux-x64.tar.gz" \
+            "$DIST/checksums.txt"
+          test "$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG" --jq .object.sha)" = "$SHA"
+          echo "Published $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/tag/$TAG"
+
+  # Clean verification: no source checkout, no build cache, fresh runner.
+  # Everything it knows about the release comes from the published assets.
+  verify:
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    env:
+      SHA: ${{ needs.build.outputs.sha }}
+      TAG: ${{ needs.build.outputs.tag }}
+      GH_TOKEN: ${{ github.token }}
+      CHECK_USER: relcheck
+    steps:
+      - name: Confirm clean runner
+        run: |
+          set -euo pipefail
+          if [ -n "$(ls -A "$GITHUB_WORKSPACE")" ]; then
+            echo "::error::workspace is not empty"; ls -la "$GITHUB_WORKSPACE"; exit 1
+          fi
+          for path in "$HOME/.cache/uv" "$RELEASES_ROOT"; do
+            if [ -e "$path" ]; then echo "::error::$path exists before download"; exit 1; fi
+          done
+          echo "clean: empty workspace, no uv cache, no $RELEASES_ROOT"
+
+      - name: "A1: download and verify checksum"
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/assets" && cd "$RUNNER_TEMP/assets"
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY"
+          ls -l
+          sha256sum -c checksums.txt
+          asset="hermes-sealed-$SHA-linux-x64.tar.gz"
+          test "$(awk '{print $2}' checksums.txt)" = "$asset"
+          echo "A1 ok: $asset $(stat -c %s "$asset") bytes, sha256 matches checksums.txt"
+
+      - name: Unpack at the final path as root
+        run: |
+          set -euo pipefail
+          asset="$RUNNER_TEMP/assets/hermes-sealed-$SHA-linux-x64.tar.gz"
+          tops="$(tar -tzf "$asset" | cut -d/ -f1 | sort -u)"
+          if [ "$tops" != "$SHA" ]; then echo "::error::tarball top dirs: $tops"; exit 1; fi
+          sudo mkdir -p "$RELEASES_ROOT"
+          sudo tar -xzf "$asset" -C "$RELEASES_ROOT"
+          R="$RELEASES_ROOT/$SHA"
+          owners="$(sudo find "$R" ! -user root -printf '%p\n' | head -5)"
+          if [ -n "$owners" ]; then echo "::error::not root-owned: $owners"; exit 1; fi
+          echo "R=$R" >> "$GITHUB_ENV"
+          sudo du -sh "$R"
+          ls -la "$R"
+
+      - name: "A2: layout"
+        run: |
+          set -euo pipefail
+          fail() { echo "::error::$*"; exit 1; }
+          top="$(find "$R" -mindepth 1 -maxdepth 1 -printf '%f\n' | sort | tr '\n' ' ')"
+          want=".hermes-baked-pycache bin enabled-features.json hermes-agent manifest.json pm-runtime release.json tools venv "
+          [ "$top" = "$want" ] || fail "top-level entries: $top"
+          echo "A2 top-level: $top"
+          jq -e '.repo == "hermes-agent" and .venv == "venv" and .store == "tools"' "$R/manifest.json" >/dev/null \
+            || fail "manifest: $(cat "$R/manifest.json")"
+          [ -x "$R/bin/hermes" ] || fail "bin/hermes missing"
+          echo "A2 manifest: repo=hermes-agent venv=venv store=tools, bin/hermes present"
+
+          gitdirs="$(find "$R" -name .git)"
+          [ -z "$gitdirs" ] || fail ".git present: $gitdirs"
+          jq -e --arg sha "$SHA" '.updateMechanism == "external" and .commit == $sha' \
+            "$R/hermes-agent/install-stamp.json" >/dev/null || fail "stamp: $(cat "$R/hermes-agent/install-stamp.json")"
+          echo "A2 repo: no .git; install-stamp updateMechanism=external commit=$SHA"
+
+          jq -e --arg sha "$SHA" '
+            .sha == $sha and (.built_at | length > 0) and .extras == ["all", "messaging"]
+            and (.python | startswith("3.14"))
+            and ([.tools[].name] as $n | ["python","node","npm","uv","ripgrep","ffmpeg"] | all(. as $t | $n | index($t)))
+          ' "$R/release.json" >/dev/null || fail "release.json: $(cat "$R/release.json")"
+          excluded="$(jq -r '.packages | keys[] | select(startswith("llamacpp-") or . == "cua-driver")' "$R/tools/facts.json")"
+          [ -z "$excluded" ] || fail "excluded tools in facts.json: $excluded"
+          dirs="$(find "$R/tools" -mindepth 1 -maxdepth 1 \( -name 'llamacpp-*' -o -name 'cua-driver*' \))"
+          [ -z "$dirs" ] || fail "excluded tool entries in tools/: $dirs"
+          echo "A2 tools trimmed: no llamacpp-* or cua-driver in facts.json or tools/"
+          echo "A2 release.json: sha, built_at, extras [all, messaging], python $(jq -r .python "$R/release.json"), tools $(jq -c '[.tools[].name]' "$R/release.json")"
+
+          private="$(find "$R" ! -type l -perm 0600 | head -5)"
+          [ -z "$private" ] || fail "mode 0600: $private"
+          unreadable="$(find "$R" ! -type l ! -perm -0444 | head -5)"
+          [ -z "$unreadable" ] || fail "not world-readable: $unreadable"
+          closed="$(find "$R" -type d ! -perm -0555 | head -5)"
+          [ -z "$closed" ] || fail "directory not traversable: $closed"
+          writable="$(find "$R" ! -type l -perm /0022 | head -5)"
+          [ -z "$writable" ] || fail "group/other-writable: $writable"
+          [ "$(stat -c %a "$R/tools/facts.json")" = 644 ] || fail "facts.json mode $(stat -c %a "$R/tools/facts.json")"
+          echo "A2 modes: no 0600 file, all readable, dirs traversable, facts.json 0644"
+
+          locks="$(find "$R" \( -name .lock -o -name '.*.lock' \))"
+          [ -z "$locks" ] || fail "lock files: $locks"
+          echo "A2 locks: none"
+
+          hash="$(sha256sum "$R/hermes-agent/scripts/whatsapp-bridge/package.json" | cut -c1-16)"
+          [ "$(cat "$R/hermes-agent/scripts/whatsapp-bridge/node_modules/.hermes-pkg-hash")" = "$hash" ] \
+            || fail "bridge .hermes-pkg-hash mismatch"
+          echo "A2 bridge: node_modules present, .hermes-pkg-hash=$hash"
+
+      # The build job ran at these same runner paths. None of them may appear.
+      # Any other /home/runner text must sit in an unmodified third-party file:
+      # a wheel file matching its RECORD hash, or a PM tool entry matching the
+      # tree digest PM recorded when it staged the verified archive.
+      - name: "A2: no build-host paths"
+        run: |
+          set -euo pipefail
+          own=("$GITHUB_WORKSPACE" "$RUNNER_TEMP/sealed-build" "$R/.build-" "/home/runner/.cache")
+          args=(); for p in "${own[@]}"; do args+=(-e "$p"); done
+          if grep -rIl -F "${args[@]}" "$R"; then echo "::error::build-host paths in the tree"; exit 1; fi
+          echo "A2 build-host paths (${own[*]}): no match"
+          grep -rIl /home/runner "$R" > "$RUNNER_TEMP/runner-hits.txt" || true
+          echo "A2 grep -rIl /home/runner: $(wc -l < "$RUNNER_TEMP/runner-hits.txt") file(s)"
+          py="$R/$(jq -r .runtime.storePython "$R/manifest.json")"
+          "$py" -B - "$R" "$RUNNER_TEMP/runner-hits.txt" <<'PY'
+          import base64, csv, hashlib, json, sys
+          from pathlib import Path
+          root, hits = Path(sys.argv[1]), Path(sys.argv[2]).read_text().split()
+          sys.path.insert(0, str(root / "hermes-agent"))
+          from pm.store import tree_digest
+          site = next((root / "venv/lib").glob("python*/site-packages"))
+          facts = json.loads((root / "tools/facts.json").read_text())["packages"]
+          entries = {fact["entry"]: (name, fact.get("digest")) for name, fact in facts.items() if "entry" in fact}
+          records = {}
+          for record in site.glob("*.dist-info/RECORD"):
+              for row in csv.reader(record.read_text().splitlines()):
+                  if len(row) >= 2 and row[1].startswith("sha256="):
+                      records[(site / row[0]).resolve()] = row[1][7:]
+          bad = []
+          for hit in map(Path, hits):
+              data = hit.read_bytes()
+              at = data.find(b"/home/runner")
+              snippet = data[max(0, at - 60):at + 60].decode(errors="replace").replace("\n", " ")
+              rel = hit.relative_to(root)
+              if hit.is_relative_to(site):
+                  want = records.get(hit.resolve())
+                  have = base64.urlsafe_b64encode(hashlib.sha256(data).digest()).rstrip(b"=").decode()
+                  verdict = "wheel file matches RECORD" if want == have else f"RECORD mismatch ({want})"
+              elif rel.parts[0] == "tools" and rel.parts[1] in entries:
+                  name, digest = entries[rel.parts[1]]
+                  verdict = (f"PM tool {name} entry matches its recorded digest"
+                             if digest and tree_digest(root / "tools" / rel.parts[1]) == digest
+                             else f"PM tool {name} entry digest mismatch")
+              else:
+                  verdict = "not third-party content"
+              ok = verdict.startswith(("wheel file matches", "PM tool")) and "mismatch" not in verdict
+              print(f"A2 {'third-party' if ok else 'LEAK'}: {rel}: {verdict}; text: ...{snippet}...")
+              if not ok:
+                  bad.append(str(rel))
+          if bad:
+              sys.exit(f"::error::/home/runner in files that are not verified third-party content: {bad}")
+          print(f"A2 /home/runner: {len(hits)} file(s), all unmodified third-party content")
+          PY
+
+      - name: "A2: repo content comes only from the pinned commit"
+        run: |
+          set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/git/trees/$SHA?recursive=1" > "$RUNNER_TEMP/tree.json"
+          jq -e '.truncated == false' "$RUNNER_TEMP/tree.json" >/dev/null
+          jq -r '.tree[] | select(.type == "blob" or .type == "commit") | .path' "$RUNNER_TEMP/tree.json" | sort > "$RUNNER_TEMP/tree.txt"
+          (cd "$R/hermes-agent" && find . ! -type d -printf '%P\n') \
+            | grep -Ev '(^|/)__pycache__/|^hermes_agent-[^/]+\.dist-info/|^hermes_agent\.egg-info/|^scripts/whatsapp-bridge/node_modules/|^install-stamp\.json$' \
+            | sort > "$RUNNER_TEMP/release-repo.txt"
+          extra="$(comm -13 "$RUNNER_TEMP/tree.txt" "$RUNNER_TEMP/release-repo.txt")"
+          if [ -n "$extra" ]; then
+            echo "::error::files in hermes-agent/ that are not in commit $SHA:"; echo "$extra" | head -50; exit 1
+          fi
+          # Repo files such as .env.example are proven above to come from the commit.
+          envs="$(find "$R" -name .env | head -5)"
+          if [ -n "$envs" ]; then echo "::error::.env files: $envs"; exit 1; fi
+          echo "A2 content: $(wc -l < "$RUNNER_TEMP/release-repo.txt") repo files, all present in the tree of $SHA; no .env file"
+
+      - name: "A3: read-only tree, non-root user, no network"
+        run: |
+          set -euo pipefail
+          sudo chmod -R a-w "$R"
+          sudo useradd --create-home --shell /bin/bash "$CHECK_USER"
+          touch "$RUNNER_TEMP/a3-marker"
+          sleep 1
+          py="$R/$(jq -r .runtime.storePython "$R/manifest.json")"
+          site="$R/$(jq -r .runtime.sitePackages "$R/manifest.json")"
+          # The check user cannot read the runner's temp directory.
+          a3="$(mktemp /tmp/a3.XXXXXX.sh)"
+          chmod 0644 "$a3"
+          cat > "$a3" <<'SH'
+          set -euo pipefail
+          fail() { echo "::error::$*"; exit 1; }
+          echo "A3 user: $(id -un) uid=$(id -u), HERMES_DISABLE_LAZY_INSTALLS=$HERMES_DISABLE_LAZY_INSTALLS"
+          if touch "$R/write-probe" 2>/dev/null; then fail "tree is writable"; fi
+          echo "A3 tree read-only: write probe refused"
+
+          out="$("$R/bin/hermes" --version 2>&1)" || fail "hermes --version failed: $out"
+          echo "$out"
+          printf '%s' "$out" | grep -qF "$SHA" || fail "--version does not report $SHA"
+          echo "A3 bin/hermes --version reports $SHA"
+
+          launch() { PYTHONPATH="$R/hermes-agent:$SITE" "$PY" -P -c "import site; site.addsitedir('$SITE'); $1"; }
+          # Hermes reads YAML through ruamel.yaml; PyYAML is not a dependency
+          # at recent commits, so its absence is reported, not failed.
+          launch '
+          import importlib.util
+          print("A3 PyYAML (import yaml):", "present" if importlib.util.find_spec("yaml") else "absent")
+          '
+          launch '
+          import os, ruamel.yaml, telegram, aiohttp, mcp
+          mods = (ruamel.yaml, telegram, aiohttp, mcp)
+          outside = [m.__name__ for m in mods if not m.__file__.startswith(os.environ["R"] + "/")]
+          assert not outside, f"imported from outside the release: {outside}"
+          print("A3 imports ok via storePython:", *(m.__name__ + "=" + m.__file__ for m in mods))
+          ' \
+            || fail "imports through the release interpreter"
+          "$R/venv/bin/python" -c 'import ruamel.yaml, telegram, aiohttp, mcp; print("A3 imports ok via venv/bin/python")' \
+            || fail "imports through venv/bin/python"
+
+          launch '
+          import os, shutil, pm
+          problems = pm.activate()
+          print("A3 pm.activate problems:", problems)
+          for tool in ("rg", "ffmpeg", "node"):
+              print("A3 which", tool, "->", shutil.which(tool))
+          # agent-browser is selected from PM facts, not PATH (its binary is
+          # agent-browser-<target>), so use the browser tool resolver.
+          from tools.browser_tool_install import _find_agent_browser
+          print("A3 which agent-browser ->", _find_agent_browser(validate=False))
+          chromium = pm.installed_package("chromium")
+          print("A3 chromium binary:", chromium.binary if chromium else None)
+          ' > "$HOME/tools.txt"
+          cat "$HOME/tools.txt"
+          grep -q "problems: \[\]" "$HOME/tools.txt" || fail "pm.activate reported problems"
+          for tool in rg ffmpeg node agent-browser; do
+            path="$(awk -v t="$tool" '$3 == t {print $5}' "$HOME/tools.txt")"
+            case "$path" in "$R"/*) ;; *) fail "$tool resolves to '$path', not the release" ;; esac
+          done
+          rg_bin="$(awk '$3 == "rg" {print $5}' "$HOME/tools.txt")"
+          ff_bin="$(awk '$3 == "ffmpeg" {print $5}' "$HOME/tools.txt")"
+          node_bin="$(awk '$3 == "node" {print $5}' "$HOME/tools.txt")"
+          echo "A3 rg: $("$rg_bin" --version | head -1)"
+          echo "A3 ffmpeg: $("$ff_bin" -version | head -1)"
+          echo "A3 node: $("$node_bin" --version)"
+          ab_bin="$(awk '$3 == "agent-browser" {print $5}' "$HOME/tools.txt")"
+          echo "A3 agent-browser: $("$ab_bin" --version 2>&1 | head -1)"
+          SH
+          sudo unshare --net -- sudo -u "$CHECK_USER" -H env -i \
+            HOME="/home/$CHECK_USER" PATH=/usr/bin:/bin LANG=C.UTF-8 \
+            HERMES_DISABLE_LAZY_INSTALLS=1 R="$R" SHA="$SHA" PY="$py" SITE="$site" \
+            bash "$a3"
+
+          written="$(sudo find "$R" -newer "$RUNNER_TEMP/a3-marker")"
+          if [ -n "$written" ]; then echo "::error::writes into the tree:"; echo "$written" | head -20; exit 1; fi
+          echo "A3 find -newer sweep: no writes into $R"
+          echo "A3 user state written instead under /home/$CHECK_USER:"
+          sudo find "/home/$CHECK_USER" -maxdepth 3 -newer "$RUNNER_TEMP/a3-marker" | head -20
