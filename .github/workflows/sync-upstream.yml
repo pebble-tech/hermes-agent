@@ -149,8 +149,17 @@ jobs:
           # before push. An empty/expired PAT here breaks checkout with auth errors
           # while leaving rebase/test steps unreachable (failed_step: unknown).
 
+      # Later steps check out ops-overlay, feature branches and upstream/main,
+      # none of which reliably carry .github/scripts/. Copy the helpers out of
+      # the working tree before any checkout and call them from there, or a
+      # rebase conflict exits 127 and the issue reports failed_step: unknown.
       - name: Prepare sync failure recorder
-        run: chmod +x .github/scripts/record-sync-failure.sh .github/scripts/validate-sync-push-token.sh
+        run: |
+          SYNC_SCRIPTS="$RUNNER_TEMP/sync-scripts"
+          mkdir -p "$SYNC_SCRIPTS"
+          cp .github/scripts/record-sync-failure.sh .github/scripts/validate-sync-push-token.sh "$SYNC_SCRIPTS/"
+          chmod +x "$SYNC_SCRIPTS"/*.sh
+          echo "SYNC_SCRIPTS=$SYNC_SCRIPTS" >> "$GITHUB_ENV"
 
       # jq is required by record-sync-failure.sh; without it rebase conflicts exit
       # 127 and the failure issue reports failed_step: unknown.
@@ -175,13 +184,13 @@ jobs:
         run: |
           SYNC_PUSH_TOKEN="$(printf '%s' "$SYNC_PUSH_TOKEN" | tr -d '[:space:]')"
           export SYNC_PUSH_TOKEN
-          bash .github/scripts/validate-sync-push-token.sh "${{ github.repository }}"
+          bash "$SYNC_SCRIPTS/validate-sync-push-token.sh" "${{ github.repository }}"
 
       - name: Rebase ops-overlay onto upstream
         run: |
           git checkout -f -B "$OPS_OVERLAY_BRANCH" "origin/$OPS_OVERLAY_BRANCH"
           if ! git rebase upstream/main; then
-            bash .github/scripts/record-sync-failure.sh rebase-ops-overlay "$OPS_OVERLAY_BRANCH"
+            bash "$SYNC_SCRIPTS/record-sync-failure.sh" rebase-ops-overlay "$OPS_OVERLAY_BRANCH"
             {
               echo "::error::Conflict rebasing $OPS_OVERLAY_BRANCH onto upstream/main"
               echo "Conflicted files:"
@@ -210,7 +219,7 @@ jobs:
             echo "::group::Rebase $branch"
             git checkout -f -B "$branch" "origin/$branch"
             if ! git rebase upstream/main; then
-              bash .github/scripts/record-sync-failure.sh rebase-feature-branch "$branch"
+              bash "$SYNC_SCRIPTS/record-sync-failure.sh" rebase-feature-branch "$branch"
               {
                 echo "::error::Conflict rebasing $branch onto upstream/main"
                 echo "Conflicted files:"
@@ -228,7 +237,7 @@ jobs:
 
           echo "::group::Cherry-pick ops-overlay"
           if ! git cherry-pick "upstream/main..$OPS_OVERLAY_BRANCH"; then
-            bash .github/scripts/record-sync-failure.sh cherry-pick-main "$OPS_OVERLAY_BRANCH"
+            bash "$SYNC_SCRIPTS/record-sync-failure.sh" cherry-pick-main "$OPS_OVERLAY_BRANCH"
             git cherry-pick --abort || true
             exit 1
           fi
@@ -255,7 +264,7 @@ jobs:
                 break
               done
               if [ -f "$cherry_head" ]; then
-                bash .github/scripts/record-sync-failure.sh cherry-pick-main "$branch"
+                bash "$SYNC_SCRIPTS/record-sync-failure.sh" cherry-pick-main "$branch"
                 {
                   echo "::error::Conflict cherry-picking $branch into $INTEGRATION_BRANCH"
                   echo "Conflicted files:"
@@ -329,7 +338,7 @@ jobs:
             tests/gateway/test_telegram_send_reply_markup.py \
             tests/hermes_cli/test_plugins.py \
             -q --tb=short; then
-            bash .github/scripts/record-sync-failure.sh focused-tests "$INTEGRATION_BRANCH"
+            bash "$SYNC_SCRIPTS/record-sync-failure.sh" focused-tests "$INTEGRATION_BRANCH"
             exit 1
           fi
 
@@ -342,7 +351,7 @@ jobs:
           # Plugin tests stub what they need via conftest.py; the smoke-test
           # catches manifest drift and confirms the plugin still loads.
           if ! python -m pytest -q --tb=short; then
-            bash "$GITHUB_WORKSPACE/.github/scripts/record-sync-failure.sh" plugin-smoke-test "$INTEGRATION_BRANCH"
+            bash "$SYNC_SCRIPTS/record-sync-failure.sh" plugin-smoke-test "$INTEGRATION_BRANCH"
             exit 1
           fi
 
@@ -356,7 +365,7 @@ jobs:
           # with a clear auth error instead of after rebase/tests.
           SYNC_PUSH_TOKEN="$(printf '%s' "$SYNC_PUSH_TOKEN" | tr -d '[:space:]')"
           export SYNC_PUSH_TOKEN
-          bash .github/scripts/validate-sync-push-token.sh "${{ github.repository }}"
+          bash "$SYNC_SCRIPTS/validate-sync-push-token.sh" "${{ github.repository }}"
           git config --local --unset-all "http.https://github.com/.extraheader" || true
           git config --local credential.helper ""
           git remote set-url origin "https://x-access-token:${SYNC_PUSH_TOKEN}@github.com/${{ github.repository }}.git"
@@ -364,17 +373,17 @@ jobs:
       - name: Push rebased source branches and integration branch
         run: |
           if ! git push --force-with-lease origin "$OPS_OVERLAY_BRANCH"; then
-            bash .github/scripts/record-sync-failure.sh push "$OPS_OVERLAY_BRANCH"
+            bash "$SYNC_SCRIPTS/record-sync-failure.sh" push "$OPS_OVERLAY_BRANCH"
             exit 1
           fi
           for branch in $FEATURE_BRANCHES; do
             if ! git push --force-with-lease origin "$branch"; then
-              bash .github/scripts/record-sync-failure.sh push "$branch"
+              bash "$SYNC_SCRIPTS/record-sync-failure.sh" push "$branch"
               exit 1
             fi
           done
           if ! git push --force-with-lease origin "$INTEGRATION_BRANCH"; then
-            bash .github/scripts/record-sync-failure.sh push "$INTEGRATION_BRANCH"
+            bash "$SYNC_SCRIPTS/record-sync-failure.sh" push "$INTEGRATION_BRANCH"
             exit 1
           fi
 
