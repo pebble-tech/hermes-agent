@@ -12,6 +12,9 @@ name: Sealed release
 #
 # Release: tag <prefix>/<YYYYMMDD>-<sha12> on the pinned commit, with
 # hermes-sealed-<sha>-linux-x64.tar.gz (top dir <sha>/) and checksums.txt.
+# GITHUB_TOKEN cannot tag a commit whose workflow files differ from the
+# default branch, so the operator usually pushes the tag first and this
+# workflow publishes on it (see FORK.md, "Tagging a release").
 # Use the deploy-test prefix for trial runs.
 
 on:
@@ -81,14 +84,59 @@ jobs:
             echo "::error::commit $sha is not in $GITHUB_REPOSITORY"
             exit 1
           fi
-          existing="$(gh api "repos/$GITHUB_REPOSITORY/git/matching-refs/tags/$PREFIX_INPUT/" \
-            --jq ".[].ref | select(endswith(\"-${sha:0:12}\"))")"
-          if [ -n "$existing" ]; then
-            echo "::error::$sha already has a release tag: $existing"
+          # GITHUB_TOKEN cannot create a ref on a commit whose workflow files
+          # differ from the default branch (no `workflows` permission), which is
+          # true of most older pins. The operator then pushes the tag and this
+          # run publishes on it; creating a release on an existing tag needs no
+          # new ref.
+          release_exists() {
+            local out
+            if out="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$1" 2>&1)"; then return 0; fi
+            if grep -q "HTTP 404" <<<"$out"; then return 1; fi
+            echo "::error::release lookup for $1 failed: $out"
             exit 1
+          }
+          sha12="${sha:0:12}"
+          refs="$(gh api "repos/$GITHUB_REPOSITORY/git/matching-refs/tags/$PREFIX_INPUT/")"
+          existing=()
+          while IFS= read -r line; do
+            existing+=("$line")
+          done < <(jq -r --arg end "-$sha12" '.[] | select(.ref | endswith($end)) | .ref' <<<"$refs")
+          if [ "${#existing[@]}" -gt 1 ]; then
+            echo "::error::$sha already has a release tag: ${existing[*]}"
+            exit 1
+          elif [ "${#existing[@]}" -eq 1 ]; then
+            ref="${existing[0]}"
+            tag="${ref#refs/tags/}"
+            if ! [[ "$tag" =~ ^$PREFIX_INPUT/[0-9]{8}-$sha12$ ]]; then
+              echo "::error::$sha already has a release tag: $ref (expected $PREFIX_INPUT/<YYYYMMDD>-$sha12)"
+              exit 1
+            fi
+            read -r kind target < <(jq -r --arg ref "$ref" '.[] | select(.ref == $ref) | "\(.object.type) \(.object.sha)"' <<<"$refs")
+            if [ "$kind" = tag ]; then
+              target="$(gh api "repos/$GITHUB_REPOSITORY/git/tags/$target" --jq .object.sha)"
+            fi
+            if [ "$target" != "$sha" ]; then
+              echo "::error::$sha already has a release tag: $ref, but it points at $target, not $sha"
+              exit 1
+            fi
+            if release_exists "$tag"; then
+              echo "::error::$sha already has a release tag: $ref, with a published release"
+              exit 1
+            fi
+            echo "tag: using existing $tag at $sha (no release yet)"
+          else
+            tag="$PREFIX_INPUT/$(date -u +%Y%m%d)-$sha12"
+            if ! out="$(gh api -X POST "repos/$GITHUB_REPOSITORY/git/refs" -f ref="refs/tags/$tag" -f sha="$sha" 2>&1)"; then
+              if grep -q "HTTP 403" <<<"$out"; then
+                echo "::error::GITHUB_TOKEN may not create $tag: the commit's workflow files differ from the default branch. Push the tag, then dispatch again: git push origin $sha:refs/tags/$tag"
+              else
+                echo "::error::could not create $tag: $out"
+              fi
+              exit 1
+            fi
+            echo "tag: created $tag at $sha"
           fi
-          day="$(date -u +%Y%m%d)"
-          tag="$PREFIX_INPUT/$day-${sha:0:12}"
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           echo "Building $sha as $tag"
@@ -179,15 +227,16 @@ jobs:
           print(f"- Built {release['built_at']}")
           PY
           echo "- Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" >> "$RUNNER_TEMP/notes.md"
+          # The resolve step made sure the tag exists at $SHA; never create one here.
           gh release create "$TAG" \
             --repo "$GITHUB_REPOSITORY" \
-            --target "$SHA" \
+            --verify-tag \
             --title "$TAG" \
             --notes-file "$RUNNER_TEMP/notes.md" \
             "${flags[@]}" \
             "$DIST/hermes-sealed-$SHA-linux-x64.tar.gz" \
             "$DIST/checksums.txt"
-          test "$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG" --jq .object.sha)" = "$SHA"
+          test "$(gh api "repos/$GITHUB_REPOSITORY/commits/$TAG" --jq .sha)" = "$SHA"
           echo "Published $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/tag/$TAG"
 
   # Clean verification: no source checkout, no build cache, fresh runner.
