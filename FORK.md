@@ -70,6 +70,16 @@ gh workflow run sync-upstream.yml --repo pebble-tech/hermes-agent --ref main
 
 Close the open `sync-failure` issue after the next sync succeeds.
 
+## Sealed releases
+
+[`.github/workflows/sealed-release.yml`](.github/workflows/sealed-release.yml) builds a read-only release for one pinned commit (manual dispatch with `sha` and `tag_prefix`). It runs upstream's native payload recipe (`scripts/bundles/native.py`) from a checkout of that commit through [`.github/scripts/sealed_release_build.py`](.github/scripts/sealed_release_build.py), with four deviations: extras `all,messaging`, no shipped uv cache, `scripts/whatsapp-bridge` kept with prebuilt `node_modules`, and the optional `llamacpp-*` and `cua-driver` tools left out of the tool store.
+
+- The tree is built at its install path `/opt/hermes/releases/<sha>`; it is not relocatable.
+- The release is tagged `<prefix>/<YYYYMMDD>-<sha12>` on the pinned commit, which also keeps that commit from garbage collection. Assets: `hermes-sealed-<sha>-linux-x64.tar.gz` (top directory `<sha>/`) and `checksums.txt`.
+- A second job downloads the published asset on a clean runner and checks the layout, then runs `bin/hermes --version`, the key imports and the bundled tools as a non-root user with the tree read-only, lazy installs disabled and no network.
+
+Use the `deploy-test` prefix for trial runs; it is allowed from any branch. The `deploy` prefix is refused unless the run is a manual dispatch on `main`, so a production release is always built by reviewed code. A commit that already has a release under the chosen prefix is refused.
+
 ## Consuming this fork
 
 ### As a runtime / deploy target
