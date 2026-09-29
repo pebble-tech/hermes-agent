@@ -102,6 +102,11 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
+      - name: Validate SYNC_PUSH_TOKEN
+        env:
+          SYNC_PUSH_TOKEN: ${{ secrets.SYNC_PUSH_TOKEN }}
+        run: bash builder/.github/scripts/validate-sync-push-token.sh
+
       # Upstream's build tools at the pinned commit. native.py refuses a
       # builder whose pm/lock.json differs from the target revision.
       - name: Checkout pinned commit
@@ -162,7 +167,9 @@ jobs:
 
       - name: Publish release
         env:
-          GH_TOKEN: ${{ github.token }}
+          # GITHUB_TOKEN can publish deploy-test prereleases but org policy blocks
+          # full deploy/* releases (403 on gh release create). Classic PAT matches sync push.
+          GH_TOKEN: ${{ secrets.SYNC_PUSH_TOKEN }}
           SHA: ${{ steps.resolve.outputs.sha }}
           TAG: ${{ steps.resolve.outputs.tag }}
         run: |
@@ -201,7 +208,7 @@ jobs:
     env:
       SHA: ${{ needs.build.outputs.sha }}
       TAG: ${{ needs.build.outputs.tag }}
-      GH_TOKEN: ${{ github.token }}
+      GH_TOKEN: ${{ secrets.SYNC_PUSH_TOKEN }}
       CHECK_USER: relcheck
     steps:
       - name: Confirm clean runner
