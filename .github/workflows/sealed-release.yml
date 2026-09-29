@@ -226,7 +226,10 @@ jobs:
           print(f"- Tools: {tools}")
           print(f"- Built {release['built_at']}")
           PY
-          echo "- Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" >> "$RUNNER_TEMP/notes.md"
+          # This line is unique to the run attempt; it is how the cleanup below
+          # recognises the release this run created.
+          run_line="- Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT"
+          echo "$run_line" >> "$RUNNER_TEMP/notes.md"
           api="repos/$GITHUB_REPOSITORY"
           # The commit the tag names now, peeling an annotated tag once as the
           # resolve step does. Fails if the tag is gone or a lookup fails.
@@ -268,16 +271,33 @@ jobs:
             "${flags[@]}" \
             "$DIST/hermes-sealed-$SHA-linux-x64.tar.gz" \
             "$DIST/checksums.txt"
+          # gh release create does not return the release id. Read it back at
+          # once and keep it only if the body carries this run's line, so the
+          # cleanup below can only ever touch the release this run created.
+          release_id=""
+          if out="$(gh api "$api/releases/tags/$TAG")"; then
+            release_id="$(jq -r --arg line "$run_line" \
+              'select(.body // "" | split("\n") | map(rtrimstr("\r")) | any(. == $line)) | .id' <<<"$out")" || release_id=""
+          fi
+          [[ "$release_id" =~ ^[0-9]+$ ]] || release_id=""
           # GitHub cannot bind a release to a tag's commit, so the tag can still
-          # move between the check above and the create. Withdraw the release
-          # if it did; the tag itself is left for the operator.
+          # move between the check above and the create. Withdraw this run's
+          # release, by id, if it did; the tag itself is left for the operator.
           if ! target="$(tag_target)"; then
             echo "::error::published $TAG but could not re-read it; check the release by hand"
             exit 1
           fi
           if [ "$target" != "$SHA" ]; then
-            gh release delete "$TAG" --repo "$GITHUB_REPOSITORY" --yes
-            echo "::error::$TAG moved to $target while publishing; release withdrawn, tag left in place"
+            if [ -z "$release_id" ]; then
+              echo "::error::$TAG moved to $target while publishing and this run's release could not be identified; nothing deleted, check the release by hand"
+              exit 1
+            fi
+            if ! on_tag="$(gh api "$api/releases/$release_id" --jq .tag_name)" || [ "$on_tag" != "$TAG" ]; then
+              echo "::error::$TAG moved to $target while publishing and release $release_id is no longer on $TAG; nothing deleted, check the release by hand"
+              exit 1
+            fi
+            gh api -X DELETE "$api/releases/$release_id"
+            echo "::error::$TAG moved to $target while publishing; release $release_id withdrawn, tag left in place"
             exit 1
           fi
           echo "Published $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/tag/$TAG"
