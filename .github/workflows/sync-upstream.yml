@@ -133,7 +133,7 @@ env:
   # Workflows kept on rebuilt integration `main`. Everything else inherited from
   # upstream is stripped before push so Nous CI/publish/autofix does not re-run
   # on this deploy fork (focused tests in this workflow are the gate).
-  WORKFLOW_ALLOWLIST: "sync-upstream.yml test-cursor-webhook.yml"
+  WORKFLOW_ALLOWLIST: "sync-upstream.yml test-cursor-webhook.yml sealed-release.yml"
 
 jobs:
   sync:
@@ -272,7 +272,7 @@ jobs:
           # ops-overlay keeps the full upstream tree so rebases stay clean;
           # allowlist is reloaded from the rebased ops-overlay workflow file.
           echo "::group::Strip non-ops workflows from integration main"
-          allowlist="${WORKFLOW_ALLOWLIST:-sync-upstream.yml test-cursor-webhook.yml}"
+          allowlist="${WORKFLOW_ALLOWLIST:-sync-upstream.yml test-cursor-webhook.yml sealed-release.yml}"
           removed=0
           for f in .github/workflows/*; do
             [ -e "$f" ] || continue
