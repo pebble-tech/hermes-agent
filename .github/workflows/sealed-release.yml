@@ -227,7 +227,39 @@ jobs:
           print(f"- Built {release['built_at']}")
           PY
           echo "- Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" >> "$RUNNER_TEMP/notes.md"
-          # The resolve step made sure the tag exists at $SHA; never create one here.
+          api="repos/$GITHUB_REPOSITORY"
+          # The commit the tag names now, peeling an annotated tag once as the
+          # resolve step does. Fails if the tag is gone or a lookup fails.
+          tag_target() {
+            local out kind target
+            out="$(gh api "$api/git/ref/tags/$TAG" --jq '.object.type + " " + .object.sha')" || return 1
+            read -r kind target <<<"$out"
+            if [ "$kind" = tag ]; then
+              target="$(gh api "$api/git/tags/$target" --jq .object.sha)" || return 1
+            fi
+            [ -n "$target" ] || return 1
+            printf '%s\n' "$target"
+          }
+          # The resolve step checked the tag before a build of an hour or more.
+          # Check it again now, so a tag moved or a release added meanwhile
+          # stops the publish instead of being found after it.
+          if ! target="$(tag_target)"; then
+            echo "::error::could not resolve $TAG before publishing; nothing published"
+            exit 1
+          fi
+          if [ "$target" != "$SHA" ]; then
+            echo "::error::$TAG now points at $target, not $SHA; nothing published"
+            exit 1
+          fi
+          if out="$(gh api "$api/releases/tags/$TAG" 2>&1)"; then
+            echo "::error::$TAG gained a release during the build; nothing published"
+            exit 1
+          elif ! grep -q "HTTP 404" <<<"$out"; then
+            echo "::error::release lookup for $TAG failed: $out; nothing published"
+            exit 1
+          fi
+          echo "tag: $TAG still at $SHA with no release"
+          # Never create a ref here: --verify-tag fails if the tag is gone.
           gh release create "$TAG" \
             --repo "$GITHUB_REPOSITORY" \
             --verify-tag \
@@ -236,7 +268,18 @@ jobs:
             "${flags[@]}" \
             "$DIST/hermes-sealed-$SHA-linux-x64.tar.gz" \
             "$DIST/checksums.txt"
-          test "$(gh api "repos/$GITHUB_REPOSITORY/commits/$TAG" --jq .sha)" = "$SHA"
+          # GitHub cannot bind a release to a tag's commit, so the tag can still
+          # move between the check above and the create. Withdraw the release
+          # if it did; the tag itself is left for the operator.
+          if ! target="$(tag_target)"; then
+            echo "::error::published $TAG but could not re-read it; check the release by hand"
+            exit 1
+          fi
+          if [ "$target" != "$SHA" ]; then
+            gh release delete "$TAG" --repo "$GITHUB_REPOSITORY" --yes
+            echo "::error::$TAG moved to $target while publishing; release withdrawn, tag left in place"
+            exit 1
+          fi
           echo "Published $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/tag/$TAG"
 
   # Clean verification: no source checkout, no build cache, fresh runner.
