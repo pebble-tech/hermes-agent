@@ -171,18 +171,12 @@ class GatewayTurnMixin(
         """Inner handler that runs under the _running_agents sentinel guard."""
         _msg_start_time = time.time()
         _platform_name = source.platform.value if hasattr(source.platform, "value") else str(source.platform)
-        # INFO stays free of message text and display names; DEBUG carries them.
-        logger.info(
-            "inbound message: platform=%s chat=%s message_id=%s chars=%d reply_to_id=%s",
-            _platform_name, source.chat_id or "unknown", event.message_id,
-            len(event.text or ""), getattr(event, "reply_to_message_id", None),
-        )
-        logger.debug(
-            "inbound message text: platform=%s user=%s chat=%s msg=%r reply_to_text=%r",
-            _platform_name, source.user_name or source.user_id or "unknown",
-            source.chat_id or "unknown", (event.text or "")[:80].replace("\n", " "),
-            (getattr(event, "reply_to_text", None) or "")[:80].replace("\n", " "),
-        )
+        _chat = source.chat_id or "unknown"  # INFO carries no message text or display name; DEBUG does.
+        logger.info("inbound message: platform=%s chat=%s message_id=%s chars=%d reply_to_id=%s", _platform_name,
+                    _chat, event.message_id, len(event.text or ""), getattr(event, "reply_to_message_id", None))
+        logger.debug("inbound message text: platform=%s user=%s chat=%s msg=%r reply_to_text=%r", _platform_name,
+                     source.user_name or source.user_id or "unknown", _chat, (event.text or "")[:80].replace("\n", " "),
+                     (getattr(event, "reply_to_text", None) or "")[:80].replace("\n", " "))
 
         from gateway.run_turn_setup_guard import run_preagent_setup
         setup, reply = await run_preagent_setup(self, event, source, _quick_key, run_generation)
