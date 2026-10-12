@@ -94,6 +94,15 @@ name: Sync upstream
 #
 # Drop a branch from FEATURE_BRANCHES (and delete it from the fork) once
 # its upstream PR merges or the change is otherwise absorbed upstream.
+# Do it promptly: carried branches keep their last pushed base, so partial
+# absorption can cause a conflict and an absorbed-then-reverted change can
+# come back into `main` from a stale branch (see FORK.md).
+#
+# Each run rebases the carried branches only in the runner and builds `main`
+# from those local rebases; it never pushes a carried branch. Each one is the
+# head of an open upstream PR, and a daily force-push re-runs Nous CI on it.
+# A carried branch moves only when someone resolves a conflict on it and
+# pushes it (see FORK.md recovery).
 #
 # Runs daily at 03:00 UTC and on manual dispatch. See FORK.md for the
 # maintenance model and recovery procedure.
@@ -228,6 +237,9 @@ jobs:
             echo "Reloaded WORKFLOW_ALLOWLIST: $allowlist"
           fi
 
+      # Rebases into run-local branches only. They feed the integration rebuild
+      # below and are never pushed, so origin/<branch> (an upstream PR head)
+      # keeps its tip until a conflict fix is pushed by hand.
       - name: Rebase each feature branch onto upstream
         run: |
           for branch in $FEATURE_BRANCHES; do
@@ -385,18 +397,13 @@ jobs:
           git config --local credential.helper ""
           git remote set-url origin "https://x-access-token:${SYNC_PUSH_TOKEN}@github.com/${{ github.repository }}.git"
 
-      - name: Push rebased source branches and integration branch
+      # FEATURE_BRANCHES are not pushed: see the header comment.
+      - name: Push rebased ops-overlay and integration branch
         run: |
           if ! git push --force-with-lease origin "$OPS_OVERLAY_BRANCH"; then
             bash "$SYNC_SCRIPTS/record-sync-failure.sh" push "$OPS_OVERLAY_BRANCH"
             exit 1
           fi
-          for branch in $FEATURE_BRANCHES; do
-            if ! git push --force-with-lease origin "$branch"; then
-              bash "$SYNC_SCRIPTS/record-sync-failure.sh" push "$branch"
-              exit 1
-            fi
-          done
           if ! git push --force-with-lease origin "$INTEGRATION_BRANCH"; then
             bash "$SYNC_SCRIPTS/record-sync-failure.sh" push "$INTEGRATION_BRANCH"
             exit 1
