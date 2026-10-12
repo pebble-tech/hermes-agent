@@ -14,6 +14,10 @@ Fix **source branches** so the scheduled `sync-upstream.yml` workflow can rebuil
 integration `main`. Never patch `main` directly — sync force-rebuilds it from
 upstream + cherry-picks.
 
+The sync rebases `FEATURE_BRANCHES` only inside the runner and never pushes
+them, so `origin/<branch>` can sit on an older upstream base. Your fix push
+(B, C or D below) is the only time a carried branch moves.
+
 ## Read first
 
 1. [FORK.md](../../../FORK.md) — branch model and recovery overview

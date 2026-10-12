@@ -19,7 +19,7 @@ A scheduled GitHub Actions workflow ([`.github/workflows/sync-upstream.yml`](.gi
 
 1. Fetches `NousResearch/hermes-agent:main`.
 2. Rebases `ops-overlay` onto `upstream/main`.
-3. Rebases each branch in `FEATURE_BRANCHES` onto `upstream/main`.
+3. Rebases each branch in `FEATURE_BRANCHES` onto `upstream/main` inside the runner only. These rebases feed step 4 and are never pushed: each carried branch is the head of an open upstream PR, so a daily force-push would re-run Nous CI on it. A carried branch moves only when someone resolves a conflict on it and pushes it (see recovery below).
 4. Rebuilds `main` from scratch: checks out `upstream/main`, then cherry-picks `ops-overlay` followed by each feature branch's commits.
 5. Strips upstream GitHub Actions workflows from integration `main`, keeping only the `WORKFLOW_ALLOWLIST` (default: `sync-upstream.yml`, `test-cursor-webhook.yml`, `sealed-release.yml`). This fork is a deploy target — Nous CI/publish/autofix should not re-run here; focused tests in this workflow are the gate.
 6. Installs `hermes-agent` from the rebuilt `main` via `uv`.
@@ -29,7 +29,7 @@ A scheduled GitHub Actions workflow ([`.github/workflows/sync-upstream.yml`](.gi
    - `tests/gateway/test_telegram_send_reply_markup.py` (regression for plugin send markup via #96053)
    - `tests/hermes_cli/test_plugins.py`
 8. Clones `pebble-tech/hermes-plugin-gateway-policy` and runs its test suite (smoke-test catches plugin-side drift).
-9. On success → `push --force-with-lease` every source branch and `main`.
+9. On success → `push --force-with-lease` `ops-overlay` and `main`. Carried feature branches are not pushed.
 10. On **any** failure → opens (or comments on) a `sync-failure`-labelled issue with the run URL, upstream SHA, failed step/branch, and a machine-readable `sync-failure` YAML block. Optionally POSTs the same payload to a Cursor automation webhook (see [FORK_SYNC_AUTOMATION.md](FORK_SYNC_AUTOMATION.md)). Never force-pushes a broken state.
 
 ### Why focused tests, not the full suite
