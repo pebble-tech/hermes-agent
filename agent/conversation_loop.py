@@ -374,34 +374,6 @@ def _credential_refresh_profile(agent: Any) -> Any:
     return profiles[0] if profiles else None
 
 
-def _looks_like_material_interim_content(text: str) -> bool:
-    """Return True for mid-turn text that is likely more than progress narration."""
-    if not isinstance(text, str):
-        return False
-    normalized = re.sub(r"\s+", " ", text).strip()
-    if len(normalized) < 20:
-        return False
-    if len(normalized) >= 160:
-        return True
-    if "\n" in text and len(normalized) >= 60:
-        return True
-    if re.search(r"https?://|```|^\s*[-*]\s+", text, re.MULTILINE):
-        return True
-    if re.search(
-        r"(?i)\b(total|subtotal|price|quote|cost|shipping|postage|"
-        r"deposit|terms|refund|deadline|delivery|eta)\b",
-        normalized,
-    ):
-        return True
-    return bool(
-        re.search(
-            r"(?i)(?:\bRM\s*\d|\$\s*\d|\b\d+\s*x\s*(?:RM|\$)|"
-            r"\b\d+(?:\.\d+)?\s*(?:usd|eur|gbp)\b)",
-            normalized,
-        )
-    )
-
-
 def _pressure_with_real_floor(compressor: Any, rough_tokens: int) -> int:
     """Floor the ROUGH pre-API pressure estimate at the last REAL prompt size.
 
