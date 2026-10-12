@@ -6,7 +6,7 @@ Extracted from ``run_agent.py``; every method resolves through ``AIAgent``'s MRO
 import logging
 import re
 import threading
-from typing import Any
+from typing import Any, Dict, List
 
 from agent.memory_context import fence_recalled_context
 from session_rules.turns import sanitize_context, flatten_message_text
