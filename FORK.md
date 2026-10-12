@@ -45,6 +45,8 @@ The full upstream `pytest tests/` would catch noise unrelated to our deploy targ
 
 When an upstream PR merges, drop its branch from `FEATURE_BRANCHES` via an `ops-overlay` commit and delete the branch from the fork. The cherry-pick becomes a no-op once upstream absorbs the change.
 
+Carried branches keep their last pushed base, because the sync no longer pushes them, so each run's rebase depends on that older history. If upstream absorbs only part of a patch, a clean daily rebase can turn into a conflict; the normal recovery path handles it. If upstream absorbs a change and later reverts it, a stale branch can bring it back into integration `main`. Only commits whose patch-id exactly matches an upstream commit are dropped. So drop a branch from `FEATURE_BRANCHES` as soon as upstream absorbs it, and refresh a stale branch through the recovery path when its upstream PR needs updating.
+
 ## Recovering from a sync failure
 
 When sync fails, the workflow files a `sync-failure` issue with structured metadata. Recovery options:

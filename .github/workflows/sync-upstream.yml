@@ -94,6 +94,9 @@ name: Sync upstream
 #
 # Drop a branch from FEATURE_BRANCHES (and delete it from the fork) once
 # its upstream PR merges or the change is otherwise absorbed upstream.
+# Do it promptly: carried branches keep their last pushed base, so partial
+# absorption can cause a conflict and an absorbed-then-reverted change can
+# come back into `main` from a stale branch (see FORK.md).
 #
 # Each run rebases the carried branches only in the runner and builds `main`
 # from those local rebases; it never pushes a carried branch. Each one is the

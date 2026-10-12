@@ -31,7 +31,7 @@ them, so `origin/<branch>` can sit on an older upstream base. Your fix push
 | `origin` | `pebble-tech/hermes-agent` | Push fixes here |
 | `upstream` | `NousResearch/hermes-agent` | Fetch only; rebase onto `upstream/main` |
 
-After clone: `git fetch origin upstream --prune`
+After clone: `git fetch --multiple --prune origin upstream`
 
 **Local `main` must track `origin/main`**, not `upstream/main`:
 
@@ -133,7 +133,7 @@ gh run list --repo pebble-tech/hermes-agent --workflow sync-upstream.yml --limit
 Verify:
 
 ```bash
-git fetch origin upstream
+git fetch --multiple origin upstream
 git rev-list --count origin/main..upstream/main   # should be 0 after successful sync
 ```
 
