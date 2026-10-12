@@ -14,6 +14,10 @@ Fix **source branches** so the scheduled `sync-upstream.yml` workflow can rebuil
 integration `main`. Never patch `main` directly — sync force-rebuilds it from
 upstream + cherry-picks.
 
+The sync rebases `FEATURE_BRANCHES` only inside the runner and never pushes
+them, so `origin/<branch>` can sit on an older upstream base. Your fix push
+(B, C or D below) is the only time a carried branch moves.
+
 ## Read first
 
 1. [FORK.md](../../../FORK.md) — branch model and recovery overview
@@ -27,7 +31,7 @@ upstream + cherry-picks.
 | `origin` | `pebble-tech/hermes-agent` | Push fixes here |
 | `upstream` | `NousResearch/hermes-agent` | Fetch only; rebase onto `upstream/main` |
 
-After clone: `git fetch origin upstream --prune`
+After clone: `git fetch --multiple --prune origin upstream`
 
 **Local `main` must track `origin/main`**, not `upstream/main`:
 
@@ -129,7 +133,7 @@ gh run list --repo pebble-tech/hermes-agent --workflow sync-upstream.yml --limit
 Verify:
 
 ```bash
-git fetch origin upstream
+git fetch --multiple origin upstream
 git rev-list --count origin/main..upstream/main   # should be 0 after successful sync
 ```
 
