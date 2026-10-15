@@ -181,6 +181,7 @@ from gateway.platforms.event import MessageEvent, MessageType, ProcessingOutcome
 from plugins.platforms.telegram.telegram_entities import expand_link_entities
 from plugins.platforms.telegram.telegram_held_inbound import TelegramHeldInboundMixin
 from plugins.platforms.telegram.telegram_ids import normalize_telegram_chat_id
+from plugins.platforms.telegram.telegram_send_metadata import TelegramSendMetadataMixin
 from plugins.platforms.telegram.telegram_network import (
     SEED_FALLBACK_IPS, TelegramFallbackTransport, discover_fallback_ips, parse_fallback_ip_env, tcp_keepalive_socket_options)
 from utils import env_float, env_int
@@ -511,7 +512,7 @@ class _PollingStallError(RuntimeError):
     """
 
 
-class TelegramAdapter(TelegramHeldInboundMixin, BasePlatformAdapter):
+class TelegramAdapter(TelegramHeldInboundMixin, TelegramSendMetadataMixin, BasePlatformAdapter):
     """Telegram bot adapter: users/groups, MarkdownV2 replies, forum topics, media."""
 
     # Bound for the per-(chat_id, status_key) status-message cache; FIFO half-trim on overflow.
@@ -1274,81 +1275,6 @@ class TelegramAdapter(TelegramHeldInboundMixin, BasePlatformAdapter):
                 return False
             return default
         return bool(value)
-
-    def _link_preview_disabled(self, metadata: Optional[dict[str, Any]] = None) -> bool:
-        """Return whether this send should disable Telegram link previews.
-
-        ``metadata["disable_link_preview"]`` overrides the adapter-level
-        ``disable_link_previews`` extra when the key is present.
-        """
-        if metadata is not None and "disable_link_preview" in metadata:
-            return bool(metadata.get("disable_link_preview"))
-        return bool(getattr(self, "_disable_link_previews", False))
-
-    def _link_preview_kwargs(self, metadata: Optional[dict[str, Any]] = None) -> dict[str, Any]:
-        if not self._link_preview_disabled(metadata):
-            return {}
-        if LinkPreviewOptions is not None:
-            return {"link_preview_options": LinkPreviewOptions(is_disabled=True)}
-        return {"disable_web_page_preview": True}
-
-    def _coerce_send_reply_markup(self, value: Any) -> Any:
-        """Turn send() metadata ``reply_markup`` into an InlineKeyboardMarkup.
-
-        Accepts an already-built markup object, Telegram's
-        ``{"inline_keyboard": [...]}`` shape, or structured rows of button
-        dicts (``text`` plus ``callback_data`` and/or ``url``).
-        """
-        if value is None:
-            return None
-        if isinstance(value, (list, tuple)):
-            rows = value
-        elif isinstance(value, dict) and "inline_keyboard" in value:
-            rows = value.get("inline_keyboard")
-        else:
-            return value
-        if not isinstance(rows, (list, tuple)):
-            return None
-        built: list[list[Any]] = []
-        for row in rows:
-            if not isinstance(row, (list, tuple)):
-                continue
-            buttons: list[Any] = []
-            for btn in row:
-                if isinstance(InlineKeyboardButton, type) and isinstance(
-                    btn, InlineKeyboardButton
-                ):
-                    buttons.append(btn)
-                    continue
-                if not isinstance(btn, dict):
-                    continue
-                text = btn.get("text")
-                if not text:
-                    continue
-                kwargs: dict[str, Any] = {}
-                if btn.get("callback_data") is not None:
-                    kwargs["callback_data"] = str(btn["callback_data"])
-                if btn.get("url") is not None:
-                    kwargs["url"] = str(btn["url"])
-                if not kwargs:
-                    continue
-                buttons.append(InlineKeyboardButton(str(text), **kwargs))
-            if buttons:
-                built.append(buttons)
-        if not built:
-            return None
-        return InlineKeyboardMarkup(built)
-
-    def _send_reply_markup_kwargs(
-        self, metadata: Optional[dict[str, Any]], chunk_index: int
-    ) -> dict[str, Any]:
-        """Attach inline keyboard markup to the first chunk only."""
-        if chunk_index != 0 or not metadata:
-            return {}
-        markup = self._coerce_send_reply_markup(metadata.get("reply_markup"))
-        if markup is None:
-            return {}
-        return {"reply_markup": markup}
 
     # --- Bot API 10.1 Rich Messages (sendRichMessage): final/new-message replies opportunistically send
     # RAW agent markdown so tables, task lists, <details>, math render natively; legacy MarkdownV2 send()
