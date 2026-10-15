@@ -1317,11 +1317,11 @@ class TelegramAdapter(TelegramHeldInboundMixin, TelegramTopicRoutingMixin, BaseP
             return value
         if not isinstance(rows, (list, tuple)):
             return None
-        built: List[List[Any]] = []
+        built: list[list[Any]] = []
         for row in rows:
             if not isinstance(row, (list, tuple)):
                 continue
-            buttons: List[Any] = []
+            buttons: list[Any] = []
             for btn in row:
                 if isinstance(InlineKeyboardButton, type) and isinstance(
                     btn, InlineKeyboardButton
@@ -1333,7 +1333,7 @@ class TelegramAdapter(TelegramHeldInboundMixin, TelegramTopicRoutingMixin, BaseP
                 text = btn.get("text")
                 if not text:
                     continue
-                kwargs: Dict[str, Any] = {}
+                kwargs: dict[str, Any] = {}
                 if btn.get("callback_data") is not None:
                     kwargs["callback_data"] = str(btn["callback_data"])
                 if btn.get("url") is not None:
@@ -1348,8 +1348,8 @@ class TelegramAdapter(TelegramHeldInboundMixin, TelegramTopicRoutingMixin, BaseP
         return InlineKeyboardMarkup(built)
 
     def _send_reply_markup_kwargs(
-        self, metadata: Optional[Dict[str, Any]], chunk_index: int
-    ) -> Dict[str, Any]:
+        self, metadata: Optional[dict[str, Any]], chunk_index: int
+    ) -> dict[str, Any]:
         """Attach inline keyboard markup to the first chunk only."""
         if chunk_index != 0 or not metadata:
             return {}
