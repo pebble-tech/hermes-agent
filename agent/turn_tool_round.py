@@ -26,8 +26,8 @@ _HOUSEKEEPING_TOOLS = frozenset({"memory", "todo_list", "skill_manage", "session
 # user (interim messages disabled, and the text not streamed or only partly streamed), so
 # the model's next reply can carry it.
 UNDELIVERED_INTERIM_MARKER = (
-    "[The text above was not shown to the user. Any fact they need from it must go in "
-    "your reply.]"
+    "[The text above was not shown to the user. Repeat any fact they need in your reply; "
+    "skip acknowledgements and progress notes.]"
 )
 
 
