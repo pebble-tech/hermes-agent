@@ -1,5 +1,5 @@
 """Per-send options ``TelegramAdapter.send()`` reads from ``metadata``, kept out of the adapter facade:
-an inline keyboard (``reply_markup``) and a link-preview override (``disable_link_preview``)."""
+an inline keyboard (``reply_markup`` or ``buttons``) and a link-preview override (``disable_link_preview``)."""
 
 from __future__ import annotations
 
@@ -88,7 +88,23 @@ class TelegramSendMetadataMixin:
         """Attach inline keyboard markup to the first chunk only."""
         if chunk_index != 0 or not metadata:
             return {}
-        markup = self._coerce_send_reply_markup(metadata.get("reply_markup"))
+        markup = self._coerce_send_reply_markup(self._send_markup_source(metadata))
         if markup is None:
             return {}
         return {"reply_markup": markup}
+
+    @staticmethod
+    def _send_markup_source(metadata: dict[str, Any]) -> Any:
+        """The keyboard a send asks for: ``reply_markup`` when set, else ``buttons`` as rows.
+
+        ``buttons`` takes the shape of #16544 and #95594: a flat list of button dicts is one row; a
+        list holding any list is a grid, where a bare button dict becomes a row of its own.
+        """
+        if metadata.get("reply_markup") is not None:
+            return metadata["reply_markup"]
+        buttons = metadata.get("buttons")
+        if not isinstance(buttons, (list, tuple)) or not buttons:
+            return None
+        if not any(isinstance(b, (list, tuple)) for b in buttons):
+            return [buttons]
+        return [b if isinstance(b, (list, tuple)) else [b] for b in buttons]
