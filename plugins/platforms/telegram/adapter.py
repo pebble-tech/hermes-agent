@@ -1358,9 +1358,9 @@ class TelegramAdapter(TelegramHeldInboundMixin, TelegramSendMetadataMixin, BaseP
             and self._rich_content_ok(content))
 
     def _should_attempt_rich(self, content: str, metadata: Optional[dict[str, Any]] = None) -> bool:
-        # sendRichMessage does not carry plugin inline keyboards. Skip rich
-        # so the legacy path can attach reply_markup instead of dropping it.
-        if (metadata or {}).get("reply_markup"):
+        # sendRichMessage does not carry plugin inline keyboards. Skip rich so the
+        # legacy path can attach reply_markup / buttons instead of dropping them.
+        if self._send_markup_source(metadata or {}):
             return False
         return bool(not (metadata or {}).get("expect_edits") and self._rich_eligible(content))
 

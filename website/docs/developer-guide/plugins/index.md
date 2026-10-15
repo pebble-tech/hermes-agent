@@ -1820,7 +1820,7 @@ await adapter.send(
 )
 ```
 
-`reply_markup` accepts button-dict rows (`text` plus `callback_data` and/or `url`) or an already-built `InlineKeyboardMarkup`. On a split message the keyboard is attached to the first chunk only. If `reply_markup` is present, the rich-message path is skipped so the keyboard is not dropped.
+`reply_markup` accepts button-dict rows (`text` plus `callback_data` and/or `url`) or an already-built `InlineKeyboardMarkup`. `metadata["buttons"]` is accepted too: a flat list of button dicts is one row, and a list of lists is one row per inner list. If both keys are set, `reply_markup` wins. On a split message the keyboard is attached to the first chunk only. When a keyboard is requested, the rich-message path is skipped so the keyboard is not dropped.
 
 :::tip
 This guide covers **general plugins** (tools, hooks, slash commands, CLI commands). The sections below sketch the authoring pattern for each specialized plugin type; each links to its full guide for field reference and examples.
