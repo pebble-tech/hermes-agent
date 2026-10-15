@@ -840,8 +840,7 @@ class TelegramAdapter(TelegramHeldInboundMixin, BasePlatformAdapter):
         # profile closure. getattr tolerates partially-constructed adapters (object.__new__ in tests).
         if getattr(self, "_authorization_check", None) is not None:
             injected = self._is_sender_authorized(
-                normalized_user_id, chat_type=normalized_chat_type,
-                chat_id=str(chat_id or normalized_user_id),
+                normalized_user_id, chat_type=normalized_chat_type, chat_id=str(chat_id or normalized_user_id),
                 thread_id=str(thread_id) if thread_id is not None else None)
             if injected is not None:
                 return injected
@@ -1275,21 +1274,6 @@ class TelegramAdapter(TelegramHeldInboundMixin, BasePlatformAdapter):
                 return False
             return default
         return bool(value)
-
-    def _coerce_float_extra(
-        self, key: str, default: float, *, min_value: Optional[float] = None, max_value: Optional[float] = None) -> float:
-        value = self.config.extra.get(key) if getattr(self.config, "extra", None) else None
-        if value is None:
-            return default
-        try:
-            parsed = float(value)
-        except (TypeError, ValueError):
-            return default
-        if min_value is not None:
-            parsed = max(parsed, min_value)
-        if max_value is not None:
-            parsed = min(parsed, max_value)
-        return parsed
 
     def _link_preview_disabled(self, metadata: Optional[dict[str, Any]] = None) -> bool:
         """Return whether this send should disable Telegram link previews.
