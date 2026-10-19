@@ -54,15 +54,16 @@ name: Sync upstream
 #   branch and the Nous PR are left as they are. Dropped from
 #   FEATURE_BRANCHES 2026-09-29.
 #
+#   fix/gateway-matcher-payload-launcher (gateway identity matcher counts a
+#   gateway started by the native payload's bin/hermes) is no longer carried.
+#   Upstream landed the same fix as #127865 (7e247c44a6, b8e986cb2b). Dropped
+#   from FEATURE_BRANCHES 2026-10-19.
+#
 #   feat/compression-summary-instructions → #89399 configurable
 #   compression.summary_instructions (open).
 #
 #   feat/telegram-plugin-callback-handlers → #96053 plugin
 #   callback_query handlers and send() markup metadata (open).
-#
-#   fix/gateway-matcher-payload-launcher → gateway identity matcher counts a
-#   gateway started by the native payload's bin/hermes (scripts/build/
-#   launchers.posix_launcher). Upstream PR not opened yet.
 #
 #   fix/cancelled-turn-interrupts-agent → a cancelled turn task hard-
 #   interrupts the agent it was awaiting, so its executor thread stops calling
@@ -149,10 +150,9 @@ env:
   # - feat/compression-summary-instructions is independent (PR #89399).
   # - feat/telegram-plugin-callback-handlers is independent (PR #96053).
   # - fix/opencode-go-reasoning-effort-coverage is independent (PR #126103).
-  # - fix/gateway-matcher-payload-launcher is independent (upstream PR pending).
   # - fix/cancelled-turn-interrupts-agent is independent (upstream PR pending).
   # - fix/gateway-log-no-message-text is independent (upstream PR pending).
-  FEATURE_BRANCHES: "fix/busy-path-pre-gateway-dispatch-upstream feature/end-turn-tool-contract-upstream fix/diagnostic-status-leak-and-end-turn-nudge fix/undelivered-tool-call-content fix/telegram-forum-topic-reply-anchor feat/compression-summary-instructions feat/telegram-plugin-callback-handlers fix/opencode-go-reasoning-effort-coverage fix/gateway-matcher-payload-launcher fix/cancelled-turn-interrupts-agent fix/gateway-log-no-message-text"
+  FEATURE_BRANCHES: "fix/busy-path-pre-gateway-dispatch-upstream feature/end-turn-tool-contract-upstream fix/diagnostic-status-leak-and-end-turn-nudge fix/undelivered-tool-call-content fix/telegram-forum-topic-reply-anchor feat/compression-summary-instructions feat/telegram-plugin-callback-handlers fix/opencode-go-reasoning-effort-coverage fix/cancelled-turn-interrupts-agent fix/gateway-log-no-message-text"
   PLUGIN_REPO: pebble-tech/hermes-plugin-gateway-policy
   # Workflows kept on rebuilt integration `main`. Everything else inherited from
   # upstream is stripped before push so Nous CI/publish/autofix does not re-run
