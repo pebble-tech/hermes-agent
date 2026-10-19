@@ -735,7 +735,7 @@ class GatewayAdapterLifecycleMixin(GatewaySecondaryReconnectMixin):
         """Flag NEEDS_ATTENTION (once) past the threshold — a signal, NOT a circuit breaker. The threshold
         is the bound profile's ``agent.reconnect_attention_after``: secondaries call this inside their
         ``_profile_runtime_scope`` with their ``<profile>:<platform>`` status key. True = flagged now."""
-        from gateway.run import _reconnect_needs_attention
+        from gateway.run_reconnect_attention import _reconnect_needs_attention
         if info.get("attention_flagged") or not _reconnect_needs_attention(info, now):
             return False
         info["attention_flagged"] = True
