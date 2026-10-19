@@ -24,10 +24,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from gateway.config import GatewayConfig, Platform, PlatformConfig
-from gateway.run import (
-    GatewayRunner,
-    _reconnect_needs_attention,
-)
+from gateway.run import GatewayRunner
+from gateway.run_reconnect_attention import _reconnect_needs_attention
 
 
 # ── Telegram: type-based auth classification ───────────────────────────
