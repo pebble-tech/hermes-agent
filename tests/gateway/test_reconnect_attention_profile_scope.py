@@ -11,6 +11,7 @@ import pytest
 import hermes_yaml as yaml
 
 import gateway.run as gateway_run
+import gateway.run_reconnect_attention as reconnect_attention
 from gateway.config import Platform
 from gateway.run import GatewayRunner
 
@@ -30,15 +31,15 @@ def test_threshold_follows_bound_profile_scope_a_b_a(tmp_path, monkeypatch):
     now = time.monotonic()
     queued_20s_ago = {"queued_at": now - 20}
 
-    assert gateway_run._reconnect_needs_attention(dict(queued_20s_ago), now) is True
+    assert reconnect_attention._reconnect_needs_attention(dict(queued_20s_ago), now) is True
     with gateway_run._profile_runtime_scope(home_b, hydrate_secrets=False):
-        assert gateway_run._reconnect_needs_attention(dict(queued_20s_ago), now) is False
-    assert gateway_run._reconnect_needs_attention(dict(queued_20s_ago), now) is True
+        assert reconnect_attention._reconnect_needs_attention(dict(queued_20s_ago), now) is False
+    assert reconnect_attention._reconnect_needs_attention(dict(queued_20s_ago), now) is True
 
     # Live edit of the bound profile's config takes effect on the next call, no restart.
     (home_a / "config.yaml").write_text(
         yaml.safe_dump({"agent": {"reconnect_attention_after": 100000}}), encoding="utf-8")
-    assert gateway_run._reconnect_needs_attention(dict(queued_20s_ago), now) is False
+    assert reconnect_attention._reconnect_needs_attention(dict(queued_20s_ago), now) is False
 
 
 @pytest.mark.asyncio
