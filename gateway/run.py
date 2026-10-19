@@ -720,20 +720,7 @@ def _sanitize_gateway_final_response(platform: Any, text: str) -> str:
     return redacted
 
 
-_RECOVERY_STATUS_RE = re.compile(
-    r"("
-    r"model returned empty after tool calls.{0,80}nudging to continue"
-    r"|thinking-only response.{0,80}prefilling to continue"
-    r")",
-    re.IGNORECASE | re.DOTALL,
-)
-
-
-def _is_recovery_status(event_type: str, text: str) -> bool:
-    """True for recovery-class statuses (empty-after-tools nudge, thinking prefill)."""
-    if str(event_type or "").strip().lower() == "recovery":
-        return True
-    return bool(_RECOVERY_STATUS_RE.search(text))
+from gateway.run_status_recovery import _is_recovery_status
 
 
 def _prepare_gateway_status_message(
@@ -3266,34 +3253,6 @@ _RECONNECT_BACKOFF_CAP = 300
 def _reconnect_backoff(attempt: int) -> int:
     """Exponential reconnect backoff: 30s, 60s, 120s, ... capped at 5 min."""
     return min(30 * (2 ** (attempt - 1)), _RECONNECT_BACKOFF_CAP)
-
-
-def _reconnect_attention_after_secs() -> float:
-    """``agent.reconnect_attention_after`` of the profile whose scope is bound at call time (the launch
-    profile's when unbound). Seconds continuously in the reconnect queue before NEEDS_ATTENTION; retrying
-    never stops (transient outages must self-heal), this only makes a permanently-failing loop loud.
-    Non-positive disables. Read per call, never cached: one process serves many profiles and a config
-    edit must not need a gateway restart (#115635)."""
-    from hermes_cli.config import load_config_readonly
-    agent_cfg = load_config_readonly().get("agent")
-    raw = agent_cfg.get("reconnect_attention_after") if isinstance(agent_cfg, dict) else None
-    try:
-        return float(raw)
-    except (TypeError, ValueError):
-        return float(_DEFAULT_CONFIG["agent"]["reconnect_attention_after"])
-
-
-def _reconnect_needs_attention(info: dict, now: float) -> bool:
-    """True when a reconnect-queue entry has waited long enough for NEEDS_ATTENTION.
-    ``queued_at`` is re-stamped on each (re)entry, so only *continuous* failure escalates."""
-    threshold = _reconnect_attention_after_secs()
-    if threshold <= 0:
-        return False  # escalation disabled
-    queued_at = info.get("queued_at")
-    if queued_at is None:
-        info["queued_at"] = now
-        return False
-    return (now - queued_at) >= threshold
 
 
 # "No session DB pinned": lets ``_session_db`` distinguish "resolve from profile scope" from a
