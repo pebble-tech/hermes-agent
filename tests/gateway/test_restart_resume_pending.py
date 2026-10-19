@@ -42,9 +42,9 @@ from gateway.run import (
     _is_fresh_gateway_interruption,
     _last_transcript_timestamp,
     _prepare_resume_pending_message,
-    _should_clear_resume_pending_after_turn,
     build_resume_recovery_note,
 )
+from gateway.run_final_reply import _should_clear_resume_pending_after_turn
 from gateway.session import SessionEntry, SessionSource, SessionStore
 from tests.gateway.restart_test_helpers import (
     RestartTestAdapter,
