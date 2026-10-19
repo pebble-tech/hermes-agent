@@ -64,9 +64,9 @@ class GatewayTurnPersistenceMixin:
         logging, resume-pending clear, empty-response normalization, and identity-guarded
         post-compression session_id propagation. Returns
         ``(response, _intentional_silence, agent_messages)``."""
-        from gateway.run import (
-            _is_gateway_hidden_reasoning_incomplete_turn, _normalize_empty_agent_response,
-            _sanitize_gateway_final_response, _should_clear_resume_pending_after_turn,
+        from gateway.run import _normalize_empty_agent_response, _sanitize_gateway_final_response
+        from gateway.run_final_reply import (
+            _is_gateway_hidden_reasoning_incomplete_turn, _should_clear_resume_pending_after_turn,
         )
         response = agent_result.get("final_response") or ""
         # Hidden-reasoning-only retry exhaustion: the loop's sentinel text doubles as final_response
