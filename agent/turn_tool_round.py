@@ -194,19 +194,7 @@ def run_tool_round(
 
     if getattr(agent, "_last_tool_calls_all_end_turn", False):
         _turn_exit_reason = "end_turn_tool_batch"
-        turn_content = assistant_message.content or ""
-        clean = agent._strip_think_blocks(turn_content).strip()
-        closing = agent._build_empty_assistant_placeholder()
-        if clean:
-            closing["content"] = clean
-        append_message(messages, closing)
-        if clean and getattr(agent, "interim_assistant_callback", None) is not None:
-            agent._response_was_previewed = True
-        final_response = clean
-        agent._last_content_with_tools = None
-        agent._last_content_tools_all_housekeeping = False
-        agent._last_tool_calls_all_end_turn = False
-        agent._empty_content_retries = 0
+        final_response = close_end_turn_batch(agent, assistant_message=assistant_message, messages=messages)
         return _verdict("break")
 
     # Reset per-turn retry counters so one truncation can't poison the turn.
@@ -248,6 +236,26 @@ def run_tool_round(
     # the gateway kills the session before the next activity touch fires (#69559, #69131).
     agent._touch_activity(f"tool results posted, continuing iteration #{api_call_count}")
     return _verdict("continue")
+
+
+def close_end_turn_batch(agent: Any, *, assistant_message: Any, messages: Any) -> str:
+    """End the turn after an end_turn tool batch ran; returns the turn's final response.
+
+    Appends a persistable closer carrying the batch's visible handoff text (or the empty
+    placeholder) and clears the per-turn fallback and retry state."""
+    turn_content = assistant_message.content or ""
+    clean = agent._strip_think_blocks(turn_content).strip()
+    closing = agent._build_empty_assistant_placeholder()
+    if clean:
+        closing["content"] = clean
+    append_message(messages, closing)
+    if clean and getattr(agent, "interim_assistant_callback", None) is not None:
+        agent._response_was_previewed = True
+    agent._last_content_with_tools = None
+    agent._last_content_tools_all_housekeeping = False
+    agent._last_tool_calls_all_end_turn = False
+    agent._empty_content_retries = 0
+    return clean
 
 
 def stage_tool_call_message(
