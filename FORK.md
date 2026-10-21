@@ -21,7 +21,7 @@ A scheduled GitHub Actions workflow ([`.github/workflows/sync-upstream.yml`](.gi
 2. Rebases `ops-overlay` onto `upstream/main`.
 3. Rebases each branch in `FEATURE_BRANCHES` onto `upstream/main` inside the runner only. These rebases feed step 4 and are never pushed: each carried branch is the head of an open upstream PR, so a daily force-push would re-run Nous CI on it. A carried branch moves only when someone resolves a conflict on it and pushes it (see recovery below).
 4. Rebuilds `main` from scratch: checks out `upstream/main`, then cherry-picks `ops-overlay` followed by each feature branch's commits.
-5. Strips upstream GitHub Actions workflows from integration `main`, keeping only the `WORKFLOW_ALLOWLIST` (default: `sync-upstream.yml`, `test-cursor-webhook.yml`, `sealed-release.yml`). This fork is a deploy target — Nous CI/publish/autofix should not re-run here; focused tests in this workflow are the gate.
+5. Strips upstream GitHub Actions workflows from integration `main`, keeping only the `WORKFLOW_ALLOWLIST` (default: `sync-upstream.yml`, `test-cursor-webhook.yml`, `sealed-release.yml`). This fork is a deploy target — Nous CI/publish/autofix should not re-run here; focused tests in this workflow are the gate. The strip must happen before the push: the push uses a PAT, and PAT pushes trigger workflows, so any upstream push-on-main workflow still on `main` would run once.
 6. Installs `hermes-agent` from the rebuilt `main` via `uv`.
 7. Runs focused tests:
    - `tests/gateway/test_pre_gateway_dispatch.py` (regression for the hook contract our gateway-policy plugin depends on)
@@ -30,11 +30,12 @@ A scheduled GitHub Actions workflow ([`.github/workflows/sync-upstream.yml`](.gi
    - `tests/hermes_cli/test_plugins.py`
 8. Clones `pebble-tech/hermes-plugin-gateway-policy` and runs its test suite (smoke-test catches plugin-side drift).
 9. On success → `push --force-with-lease` `ops-overlay` and `main`. Carried feature branches are not pushed.
-10. On **any** failure → opens (or comments on) a `sync-failure`-labelled issue with the run URL, upstream SHA, failed step/branch, and a machine-readable `sync-failure` YAML block. Optionally POSTs the same payload to a Cursor automation webhook (see [FORK_SYNC_AUTOMATION.md](FORK_SYNC_AUTOMATION.md)). Never force-pushes a broken state.
+10. Disables, through the Actions API, every active workflow in the repo whose file name is not in `WORKFLOW_ALLOWLIST` (default: `sync-upstream.yml`, `test-cursor-webhook.yml`, `sealed-release.yml`). This covers `ops-overlay`, the carried branches and fork PRs, which keep upstream's files. It runs after the push, and also when the sync failed part-way, so a new upstream workflow is disabled on the next run either way. It never fails the sync: a workflow it cannot disable is logged as a `::warning::`. Workflows already disabled by hand are left alone. This fork is a deploy target — Nous CI/publish/autofix should not run here; focused tests in this workflow are the gate.
+11. On **any** failure → opens (or comments on) a `sync-failure`-labelled issue with the run URL, upstream SHA, failed step/branch, and a machine-readable `sync-failure` YAML block. Optionally POSTs the same payload to a Cursor automation webhook (see [FORK_SYNC_AUTOMATION.md](FORK_SYNC_AUTOMATION.md)). Never force-pushes a broken state.
 
 ### Why focused tests, not the full suite
 
-The full upstream `pytest tests/` would catch noise unrelated to our deploy target (flaky tests, missing env, etc.) and slow the feedback loop. The focused tests cover the contracts our customer plugins depend on: the `pre_gateway_dispatch` hook firing, WhatsApp session keying staying canonical, plugin manifests loading. Upstream workflows stay in the tree on `ops-overlay` (so rebases stay clean) but are removed from rebuilt `main` so they do not schedule or open autofix PRs on this fork.
+The full upstream `pytest tests/` would catch noise unrelated to our deploy target (flaky tests, missing env, etc.) and slow the feedback loop. The focused tests cover the contracts our customer plugins depend on: the `pre_gateway_dispatch` hook firing, WhatsApp session keying staying canonical, plugin manifests loading. Upstream workflows stay in the tree on `ops-overlay` (so rebases stay clean) and are removed from rebuilt `main` (step 5); the sync also disables them in the Actions settings (step 10) on every other branch, so they do not schedule or open autofix PRs on this fork. Enabling one by hand is undone on the next sync unless it is in `WORKFLOW_ALLOWLIST`.
 
 ## Adding a new fork patch
 
