@@ -121,6 +121,8 @@ on:
 permissions:
   contents: write
   issues: write
+  # Disable non-allowlisted workflows (step after the push).
+  actions: write
 
 concurrency:
   group: sync-upstream
@@ -154,9 +156,13 @@ env:
   # - fix/gateway-log-no-message-text is independent (upstream PR pending).
   FEATURE_BRANCHES: "fix/busy-path-pre-gateway-dispatch-upstream feature/end-turn-tool-contract-upstream fix/diagnostic-status-leak-and-end-turn-nudge fix/undelivered-tool-call-content fix/telegram-forum-topic-reply-anchor feat/compression-summary-instructions feat/telegram-plugin-callback-handlers fix/opencode-go-reasoning-effort-coverage fix/cancelled-turn-interrupts-agent fix/gateway-log-no-message-text"
   PLUGIN_REPO: pebble-tech/hermes-plugin-gateway-policy
-  # Workflows kept on rebuilt integration `main`. Everything else inherited from
-  # upstream is stripped before push so Nous CI/publish/autofix does not re-run
-  # on this deploy fork (focused tests in this workflow are the gate).
+  # Workflows allowed to run on this fork. Two mechanisms use this list:
+  # - Strip: the rebuild step removes every other workflow file from integration
+  #   `main` before the push. The push uses a PAT, and PAT pushes trigger
+  #   workflows, so upstream push-on-main workflows must not be on `main` yet.
+  # - Disable: a step after the push disables every other active workflow in the
+  #   repo through the Actions API. This covers `ops-overlay`, the carried
+  #   branches and fork PRs, which keep upstream's workflow files.
   WORKFLOW_ALLOWLIST: "sync-upstream.yml test-cursor-webhook.yml sealed-release.yml"
 
 jobs:
@@ -408,6 +414,42 @@ jobs:
             bash "$SYNC_SCRIPTS/record-sync-failure.sh" push "$INTEGRATION_BRANCH"
             exit 1
           fi
+
+      # `main` is stripped of upstream workflows, but `ops-overlay`, the carried
+      # branches and fork PRs keep them; this keeps them from running. A new
+      # upstream workflow registers when it lands on a branch, so this runs after
+      # the push, and also when the sync fails part-way. It never fails the sync: each workflow it cannot disable is
+      # logged as a warning. Matches on file name, not display name. Workflows
+      # already `disabled_manually` or `disabled_inactivity` are left alone.
+      - name: Disable non-allowlisted workflows
+        if: always()
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          allowlist="${WORKFLOW_ALLOWLIST:-sync-upstream.yml test-cursor-webhook.yml sealed-release.yml}"
+          if ! workflows=$(gh api --paginate "repos/${{ github.repository }}/actions/workflows" \
+            --jq '.workflows[] | select(.state == "active" and (.path | startswith(".github/workflows/"))) | [.id, (.path | split("/") | last)] | @tsv'); then
+            echo "::warning::Could not list workflows; none disabled"
+            exit 0
+          fi
+          while IFS=$'\t' read -r id file; do
+            [ -n "$id" ] || continue
+            keep=false
+            for a in $allowlist; do
+              if [ "$file" = "$a" ]; then
+                keep=true
+                break
+              fi
+            done
+            if [ "$keep" = true ]; then
+              echo "keep $file"
+            elif gh api -X PUT "repos/${{ github.repository }}/actions/workflows/$id/disable" >/dev/null; then
+              echo "disabled $file ($id)"
+            else
+              echo "::warning::Could not disable workflow $file ($id)"
+            fi
+          done <<< "$workflows"
 
       - name: Open / update sync-failure issue
         if: failure()
