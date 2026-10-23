@@ -154,7 +154,13 @@ env:
   # - fix/opencode-go-reasoning-effort-coverage is independent (PR #126103).
   # - fix/cancelled-turn-interrupts-agent is independent (upstream PR pending).
   # - fix/gateway-log-no-message-text is independent (upstream PR pending).
-  FEATURE_BRANCHES: "fix/busy-path-pre-gateway-dispatch-upstream feature/end-turn-tool-contract-upstream fix/diagnostic-status-leak-and-end-turn-nudge fix/undelivered-tool-call-content fix/telegram-forum-topic-reply-anchor feat/compression-summary-instructions feat/telegram-plugin-callback-handlers fix/opencode-go-reasoning-effort-coverage fix/cancelled-turn-interrupts-agent fix/gateway-log-no-message-text"
+  # - feat/web-search-depth is the tip of a two-PR stack (upstream PRs pending):
+  #   fork #90 feat/exa-3-provider-knobs (optional web.exa type, dynamic
+  #   highlights, max_age_hours and extract cap; exa-py 2.26.0), then fork #92
+  #   (optional web_search depth quick | standard | deep, capped by
+  #   web.max_depth, default standard). Listing the tip carries both; do not
+  #   also list feat/exa-3-provider-knobs.
+  FEATURE_BRANCHES: "fix/busy-path-pre-gateway-dispatch-upstream feature/end-turn-tool-contract-upstream fix/diagnostic-status-leak-and-end-turn-nudge fix/undelivered-tool-call-content fix/telegram-forum-topic-reply-anchor feat/compression-summary-instructions feat/telegram-plugin-callback-handlers fix/opencode-go-reasoning-effort-coverage fix/cancelled-turn-interrupts-agent fix/gateway-log-no-message-text feat/web-search-depth"
   PLUGIN_REPO: pebble-tech/hermes-plugin-gateway-policy
   # Workflows allowed to run on this fork. Two mechanisms use this list:
   # - Strip: the rebuild step removes every other workflow file from integration
