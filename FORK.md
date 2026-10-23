@@ -75,7 +75,7 @@ Close the open `sync-failure` issue after the next sync succeeds.
 
 ## Sealed releases
 
-[`.github/workflows/sealed-release.yml`](.github/workflows/sealed-release.yml) builds a read-only release for one pinned commit (manual dispatch with `sha` and `tag_prefix`). It runs upstream's native payload recipe (`scripts/bundles/native.py`) from a checkout of that commit through [`.github/scripts/sealed_release_build.py`](.github/scripts/sealed_release_build.py), with four deviations: extras `all,messaging`, no shipped uv cache, `scripts/whatsapp-bridge` kept with prebuilt `node_modules`, and the optional `llamacpp-*` and `cua-driver` tools left out of the tool store.
+[`.github/workflows/sealed-release.yml`](.github/workflows/sealed-release.yml) builds a read-only release for one pinned commit (manual dispatch with `sha` and `tag_prefix`). It runs upstream's native payload recipe (`scripts/bundles/native.py`) from a checkout of that commit through [`.github/scripts/sealed_release_build.py`](.github/scripts/sealed_release_build.py), with four deviations: extras `all,messaging,exa` (`exa` is the web search backend our profiles use and is not in `all`), no shipped uv cache, `scripts/whatsapp-bridge` kept with prebuilt `node_modules`, and the optional `llamacpp-*` and `cua-driver` tools left out of the tool store.
 
 - The tree is built at its install path `/opt/hermes/releases/<sha>`; it is not relocatable.
 - The release is tagged `<prefix>/<YYYYMMDD>-<sha12>` on the pinned commit, which also keeps that commit from garbage collection. Assets: `hermes-sealed-<sha>-linux-x64.tar.gz` (top directory `<sha>/`) and `checksums.txt`.
