@@ -6,7 +6,7 @@ name: Sealed release
 #
 # Recipe: upstream's native payload (scripts/bundles/native.py) from a
 # checkout of the pinned commit, driven by .github/scripts/sealed_release_build.py
-# (extras all+messaging, no shipped uv cache, WhatsApp bridge kept with
+# (extras all+messaging+exa, no shipped uv cache, WhatsApp bridge kept with
 # prebuilt node_modules, llamacpp-* and cua-driver left out of tools/). The tree is built at its final install path
 # /opt/hermes/releases/<sha>, so nothing is relocated.
 #
@@ -373,7 +373,7 @@ jobs:
           echo "A2 repo: no .git; install-stamp updateMechanism=external commit=$SHA"
 
           jq -e --arg sha "$SHA" '
-            .sha == $sha and (.built_at | length > 0) and .extras == ["all", "messaging"]
+            .sha == $sha and (.built_at | length > 0) and .extras == ["all", "messaging", "exa"]
             and (.python | startswith("3.14"))
             and ([.tools[].name] as $n | ["python","node","npm","uv","ripgrep","ffmpeg"] | all(. as $t | $n | index($t)))
           ' "$R/release.json" >/dev/null || fail "release.json: $(cat "$R/release.json")"
@@ -382,7 +382,7 @@ jobs:
           dirs="$(find "$R/tools" -mindepth 1 -maxdepth 1 \( -name 'llamacpp-*' -o -name 'cua-driver*' \))"
           [ -z "$dirs" ] || fail "excluded tool entries in tools/: $dirs"
           echo "A2 tools trimmed: no llamacpp-* or cua-driver in facts.json or tools/"
-          echo "A2 release.json: sha, built_at, extras [all, messaging], python $(jq -r .python "$R/release.json"), tools $(jq -c '[.tools[].name]' "$R/release.json")"
+          echo "A2 release.json: sha, built_at, extras [all, messaging, exa], python $(jq -r .python "$R/release.json"), tools $(jq -c '[.tools[].name]' "$R/release.json")"
 
           private="$(find "$R" ! -type l -perm 0600 | head -5)"
           [ -z "$private" ] || fail "mode 0600: $private"
@@ -508,14 +508,14 @@ jobs:
           print("A3 PyYAML (import yaml):", "present" if importlib.util.find_spec("yaml") else "absent")
           '
           launch '
-          import os, ruamel.yaml, telegram, aiohttp, mcp
-          mods = (ruamel.yaml, telegram, aiohttp, mcp)
+          import os, ruamel.yaml, telegram, aiohttp, mcp, exa_py
+          mods = (ruamel.yaml, telegram, aiohttp, mcp, exa_py)
           outside = [m.__name__ for m in mods if not m.__file__.startswith(os.environ["R"] + "/")]
           assert not outside, f"imported from outside the release: {outside}"
           print("A3 imports ok via storePython:", *(m.__name__ + "=" + m.__file__ for m in mods))
           ' \
             || fail "imports through the release interpreter"
-          "$R/venv/bin/python" -c 'import ruamel.yaml, telegram, aiohttp, mcp; print("A3 imports ok via venv/bin/python")' \
+          "$R/venv/bin/python" -c 'import ruamel.yaml, telegram, aiohttp, mcp, exa_py; print("A3 imports ok via venv/bin/python")' \
             || fail "imports through venv/bin/python"
 
           launch '
