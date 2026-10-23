@@ -4,7 +4,8 @@ The recipe is upstream's native payload (scripts/bundles/native.py:
 prepare_native + finish_native) run from a checkout of the pinned commit,
 with three deviations:
 
-1. extras ``all`` and ``messaging`` instead of ``all_extras=True``;
+1. extras ``all``, ``messaging`` and ``exa`` instead of ``all_extras=True``
+   (``exa`` is the web search backend our profiles use; it is not in ``all``);
 2. no shipped uv cache;
 3. ``scripts/whatsapp-bridge`` is kept, with prebuilt ``node_modules`` and a
    matching ``node_modules/.hermes-pkg-hash``;
@@ -37,7 +38,7 @@ import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
-EXTRAS = ("all", "messaging")
+EXTRAS = ("all", "messaging", "exa")
 BRIDGE = "scripts/whatsapp-bridge"
 # Tools the release must carry for the gateway; the native recipe may stage more.
 REQUIRED_TOOLS = ("python", "node", "npm", "uv", "ripgrep", "ffmpeg")
@@ -290,7 +291,7 @@ def inner(args) -> int:
     # so every wrapper must run exactly once before assembly is accepted.
     calls = dict.fromkeys(WRAPPERS, 0)
 
-    # Deviation 1: extras all + messaging. native._prepare_native resolves
+    # Deviation 1: extras all + messaging + exa. native._prepare_native resolves
     # build_environment through the pm facade at call time.
     upstream_build_environment = pm.build_environment
 
