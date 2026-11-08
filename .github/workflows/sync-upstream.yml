@@ -361,7 +361,16 @@ jobs:
           # Upstream moved dev deps to [dependency-groups]; `.[all,dev]` no longer
           # installs pytest. Match upstream CI: locked sync on Python 3.14.
           uv python install 3.14
-          uv sync --locked --python 3.14 --extra all --group dev
+          # GitHub release assets (e.g. kittentts wheels) occasionally 504; retry.
+          for attempt in 1 2 3 4 5; do
+            if uv sync --locked --python 3.14 --extra all --group dev; then
+              exit 0
+            fi
+            echo "::warning::uv sync failed (attempt ${attempt}/5); retrying in 30s"
+            sleep 30
+          done
+          bash "$SYNC_SCRIPTS/record-sync-failure.sh" install-deps "$INTEGRATION_BRANCH"
+          exit 1
 
       - name: Run focused tests against integration branch
         if: inputs.skip_tests != 'true'
