@@ -65,7 +65,8 @@ def _capture_batch_prompt(compressor, **kwargs):
     prompts = []
 
     def mock_call_llm(**call_kwargs):
-        prompts.append(call_kwargs["messages"][0]["content"])
+        # The summarizer sends [system instructions, user source material]; read both.
+        prompts.append("\n\n".join(m["content"] for m in call_kwargs["messages"]))
         return _summary_response()
 
     with patch("agent.context_compressor.call_llm", mock_call_llm):
