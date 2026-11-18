@@ -114,13 +114,14 @@ class TestUndeliveredInterimMarker:
     def test_undelivered_interim_marker_replays_byte_identical_across_turns(
         self, agent, tmp_path
     ):
-        from hermes_state import SessionDB
+        from persistence_assembly import open_persistence, profile_scope
+        from tests.fixtures.storage_read import conversation
         from agent.turn_tool_round import UNDELIVERED_INTERIM_MARKER
 
         agent.platform = "gateway"
         agent.interim_assistant_callback = None
-        db = SessionDB(db_path=tmp_path / "state.db")
-        agent._session_db = db
+        db = open_persistence(profile_scope(home=tmp_path))
+        agent._session_db = agent.persistence = db
         hidden_quote = "Unit price = $128\nTotal for 4 items = $519"
         agent.client.chat.completions.create.side_effect = [
             _mock_response(
@@ -139,7 +140,7 @@ class TestUndeliveredInterimMarker:
                 patch.object(agent, "_cleanup_task_resources"),
             ):
                 agent.run_conversation("how much for 4 items?")
-                stored = db.get_messages_as_conversation(agent.session_id)
+                stored = conversation(db, agent.session_id)
                 agent.run_conversation("by Friday", conversation_history=stored)
 
             (stored_row,) = self._tool_call_rows(stored)
