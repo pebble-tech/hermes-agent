@@ -92,7 +92,7 @@ The workflow's `GITHUB_TOKEN` has no `workflows` permission, so GitHub refuses i
 ```bash
 sha=<sha40>
 tag="deploy/$(date -u +%Y%m%d)-${sha:0:12}"
-git push origin "$sha:refs/tags/$tag"
+git push origin "${sha}:refs/tags/${tag}"
 gh workflow run sealed-release.yml --ref main -f sha="$sha" -f tag_prefix=deploy
 ```
 
