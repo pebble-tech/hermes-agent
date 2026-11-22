@@ -488,21 +488,29 @@ jobs:
             || fail "imports through venv/bin/python"
 
           launch '
-          import os, shutil, pm
+          import json, os, shutil, pm
           problems = pm.activate()
           print("A3 pm.activate problems:", problems)
           for tool in ("rg", "ffmpeg", "node"):
               print("A3 which", tool, "->", shutil.which(tool))
           # agent-browser is selected from PM facts, not PATH (its binary is
-          # agent-browser-<target>), so use the browser tool resolver.
-          from tools.browser_tool_install import _find_agent_browser
-          print("A3 which agent-browser ->", _find_agent_browser(validate=False))
+          # agent-browser-<target>), so use the browser tool resolver. Upstream
+          # removed agent-browser and its resolver (68500d9ff9); a release
+          # without it in release.json is reported, not failed.
+          carried = {t["name"] for t in json.load(open(os.environ["R"] + "/release.json"))["tools"]}
+          if "agent-browser" in carried:
+              from tools.browser_tool_install import _find_agent_browser
+              print("A3 which agent-browser ->", _find_agent_browser(validate=False))
+          else:
+              print("A3 agent-browser: not in this release")
           chromium = pm.installed_package("chromium")
           print("A3 chromium binary:", chromium.binary if chromium else None)
           ' > "$HOME/tools.txt"
           cat "$HOME/tools.txt"
           grep -q "problems: \[\]" "$HOME/tools.txt" || fail "pm.activate reported problems"
-          for tool in rg ffmpeg node agent-browser; do
+          checked=(rg ffmpeg node)
+          if grep -q "^A3 which agent-browser " "$HOME/tools.txt"; then checked+=(agent-browser); fi
+          for tool in "${checked[@]}"; do
             path="$(awk -v t="$tool" '$3 == t {print $5}' "$HOME/tools.txt")"
             case "$path" in "$R"/*) ;; *) fail "$tool resolves to '$path', not the release" ;; esac
           done
@@ -513,7 +521,7 @@ jobs:
           echo "A3 ffmpeg: $("$ff_bin" -version | head -1)"
           echo "A3 node: $("$node_bin" --version)"
           ab_bin="$(awk '$3 == "agent-browser" {print $5}' "$HOME/tools.txt")"
-          echo "A3 agent-browser: $("$ab_bin" --version 2>&1 | head -1)"
+          if [ -n "$ab_bin" ]; then echo "A3 agent-browser: $("$ab_bin" --version 2>&1 | head -1)"; fi
           SH
           sudo unshare --net -- sudo -u "$CHECK_USER" -H env -i \
             HOME="/home/$CHECK_USER" PATH=/usr/bin:/bin LANG=C.UTF-8 \
