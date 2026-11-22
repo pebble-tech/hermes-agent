@@ -19,10 +19,15 @@ file world-readable and fails if the tree mentions a build-host path.
 
 The output must be the final install path; relocation is not relied on.
 
+native.py builds for the machine it runs on. ``--target`` names that target
+(``linux-x64`` or ``linux-arm64``); the build fails if the host's PM target
+differs, so ``release.json`` never labels a tree with another architecture.
+
 Usage (host Python 3.14, run from anywhere):
 
     python sealed_release_build.py --source /path/to/checkout-at-sha \\
-        --sha <sha40> --out /opt/hermes/releases/<sha40> --cache /path/to/uv-cache
+        --sha <sha40> --target linux-x64 --out /opt/hermes/releases/<sha40> \\
+        --cache /path/to/uv-cache
 """
 from __future__ import annotations
 
@@ -45,6 +50,8 @@ REQUIRED_TOOLS = ("python", "node", "npm", "uv", "ripgrep", "ffmpeg")
 # Optional tools left out of the native selection (deviation 4).
 EXCLUDED_TOOL_PREFIXES = ("llamacpp-",)
 EXCLUDED_TOOLS = ("cua-driver",)
+# Targets the sealed release is built for, each on a runner of that machine.
+TARGETS = ("linux-x64", "linux-arm64")
 
 
 # Upstream call sites the inner build replaces; each must run exactly once.
@@ -108,7 +115,8 @@ def outer(args) -> int:
                "npm_config_cache": str(cache.parent / "npm-cache"),
                "PYTHONPATH": str(source)}
         command = [sys.executable, "-B", str(Path(__file__).resolve()), "--inner",
-                   "--source", str(source), "--sha", sha, "--out", str(out), "--cache", str(cache)]
+                   "--source", str(source), "--sha", sha, "--target", args.target,
+                   "--out", str(out), "--cache", str(cache)]
         status = subprocess.run(command, cwd=source, env=env).returncode
         work_path = work
     if status:
@@ -118,7 +126,7 @@ def outer(args) -> int:
 
     check_installed_extras(out)
     write_stamp(source, out, sha)
-    write_release(out, sha)
+    write_release(out, sha, args.target)
     discard_lock_files(out)
     share_tree(out)
     # Paths this build read from or wrote to. Third-party artifacts may carry
@@ -216,7 +224,7 @@ def write_stamp(source: Path, out: Path, sha: str) -> None:
         raise SystemExit(f"unexpected install stamp: {data}")
 
 
-def write_release(out: Path, sha: str) -> None:
+def write_release(out: Path, sha: str, target: str) -> None:
     facts = json.loads((out / "tools/facts.json").read_text(encoding="utf-8"))
     packages = facts.get("packages", facts)
     tools = sorted(
@@ -232,10 +240,10 @@ def write_release(out: Path, sha: str) -> None:
         raise SystemExit(f"release store carries excluded tools: {staged}")
     python = next(tool["version"] for tool in tools if tool["name"] == "python")
     release = {"schema": 1, "sha": sha, "built_at": datetime.now(timezone.utc).isoformat(),
-               "target": "linux-x64", "recipe": "scripts/bundles/native.py",
+               "target": target, "recipe": "scripts/bundles/native.py",
                "extras": list(EXTRAS), "python": python, "tools": tools}
     (out / "release.json").write_text(json.dumps(release, indent=2) + "\n", encoding="utf-8")
-    log(f"release.json: python {python}, tools {sorted(names)}")
+    log(f"release.json: target {target}, python {python}, tools {sorted(names)}")
 
 
 def discard_lock_files(out: Path) -> None:
@@ -284,7 +292,13 @@ def check_no_host_paths(out: Path, needles: list[str]) -> None:
 def inner(args) -> int:
     source, out, cache, sha = args.source, Path(args.out), args.cache, args.sha
     import pm
+    from pm.store import current_target
     from scripts.bundles import native
+
+    host = current_target()
+    if host != args.target:
+        raise SystemExit(f"this machine builds {host}, not --target {args.target}")
+    log(f"target: {host}")
 
     # Each deviation replaces one upstream call site. If upstream stops calling
     # it (renamed, inlined, moved), the recipe would silently run unmodified,
@@ -383,6 +397,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--source", type=Path, required=True, help="clean checkout at --sha")
     parser.add_argument("--sha", required=True)
+    parser.add_argument("--target", required=True, choices=TARGETS, help="this machine's PM target")
     parser.add_argument("--out", required=True, help="final install path, ending in the sha")
     parser.add_argument("--cache", type=Path, required=True, help="uv build cache (not shipped)")
     parser.add_argument("--inner", action="store_true", help=argparse.SUPPRESS)
