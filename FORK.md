@@ -78,8 +78,10 @@ Close the open `sync-failure` issue after the next sync succeeds.
 [`.github/workflows/sealed-release.yml`](.github/workflows/sealed-release.yml) builds a read-only release for one pinned commit (manual dispatch with `sha` and `tag_prefix`). It runs upstream's native payload recipe (`scripts/bundles/native.py`) from a checkout of that commit through [`.github/scripts/sealed_release_build.py`](.github/scripts/sealed_release_build.py), with four deviations: extras `all,messaging,exa` (`exa` is the web search backend our profiles use and is not in `all`), no shipped uv cache, `scripts/whatsapp-bridge` kept with prebuilt `node_modules`, and the optional `llamacpp-*` and `cua-driver` tools left out of the tool store.
 
 - The tree is built at its install path `/opt/hermes/releases/<sha>`; it is not relocatable.
-- The release is tagged `<prefix>/<YYYYMMDD>-<sha12>` on the pinned commit, which also keeps that commit from garbage collection. Assets: `hermes-sealed-<sha>-linux-x64.tar.gz` (top directory `<sha>/`) and `checksums.txt`.
-- A second job downloads the published asset on a clean runner and checks the layout, then runs `bin/hermes --version`, the key imports and the bundled tools as a non-root user with the tree read-only, lazy installs disabled and no network.
+- Two targets, each built on a GitHub runner of its own architecture, because native.py builds for the machine it runs on: `linux-x64` on `ubuntu-24.04` and `linux-arm64` on `ubuntu-24.04-arm`. The build script's `--target` must match the runner's PM target, and `release.json` `target` records it.
+- The release is tagged `<prefix>/<YYYYMMDD>-<sha12>` on the pinned commit, which also keeps that commit from garbage collection. Assets: `hermes-sealed-<sha>-linux-x64.tar.gz` and `hermes-sealed-<sha>-linux-arm64.tar.gz` (each with top directory `<sha>/`; per-target tools such as node and python sit in `tools/<name>-<version>-<target>/`), and one `checksums.txt` covering both.
+- Jobs: `resolve` (tag) → `build` (per target) → `verify` (per target) → `publish`. Each `verify` job takes its target's built asset on a clean runner of that architecture, checks the layout, then runs `bin/hermes --version`, the key imports and the bundled tools as a non-root user with the tree read-only, lazy installs disabled and no network.
+- Both or nothing: `publish` runs only when every `build` and `verify` job passed. If one fails, nothing is published and the tag is left without a release, so the next dispatch reuses it. After creating the release, `publish` downloads it back and withdraws it (tag kept) unless it serves exactly the verified files and checksums.
 
 Use the `deploy-test` prefix for trial runs; it is allowed from any branch. The `deploy` prefix is refused unless the run is a manual dispatch on `main`, so a production release is always built by reviewed code.
 
@@ -90,7 +92,7 @@ The workflow's `GITHUB_TOKEN` has no `workflows` permission, so GitHub refuses i
 ```bash
 sha=<sha40>
 tag="deploy/$(date -u +%Y%m%d)-${sha:0:12}"
-git push origin "$sha:refs/tags/$tag"
+git push origin "${sha}:refs/tags/${tag}"
 gh workflow run sealed-release.yml --ref main -f sha="$sha" -f tag_prefix=deploy
 ```
 

@@ -1,8 +1,11 @@
 name: Sealed release
 
-# Builds a sealed, read-only Hermes release for one pinned commit and
-# publishes it as a GitHub release, then verifies the published asset in a
-# separate clean job.
+# Builds a sealed, read-only Hermes release for one pinned commit, for
+# linux-x64 (ubuntu-24.04) and linux-arm64 (ubuntu-24.04-arm), verifies each
+# built asset in a clean job on its own architecture, and only then publishes
+# both as one GitHub release. Jobs: resolve -> build (per target) -> verify
+# (per target) -> publish. If any target fails to build or verify, nothing is
+# published and the tag is left for a re-dispatch.
 #
 # Recipe: upstream's native payload (scripts/bundles/native.py) from a
 # checkout of the pinned commit, driven by .github/scripts/sealed_release_build.py
@@ -11,7 +14,8 @@ name: Sealed release
 # /opt/hermes/releases/<sha>, so nothing is relocated.
 #
 # Release: tag <prefix>/<YYYYMMDD>-<sha12> on the pinned commit, with
-# hermes-sealed-<sha>-linux-x64.tar.gz (top dir <sha>/) and checksums.txt.
+# hermes-sealed-<sha>-linux-x64.tar.gz and hermes-sealed-<sha>-linux-arm64.tar.gz
+# (each with top dir <sha>/) and one checksums.txt covering both.
 # GITHUB_TOKEN cannot tag a commit whose workflow files differ from the
 # default branch, so the operator usually pushes the tag first and this
 # workflow publishes on it (see FORK.md, "Tagging a release").
@@ -40,11 +44,13 @@ concurrency:
 
 env:
   RELEASES_ROOT: /opt/hermes/releases
+  # Every target the build and verify matrices carry; publish needs them all.
+  TARGETS: linux-x64 linux-arm64
 
 jobs:
-  build:
+  resolve:
     runs-on: ubuntu-24.04
-    timeout-minutes: 150
+    timeout-minutes: 10
     permissions:
       contents: write
     outputs:
@@ -141,6 +147,26 @@ jobs:
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           echo "Building $sha as $tag"
 
+  # One leg per target, each on a runner of its own architecture: native.py
+  # builds for the machine it runs on. A failed leg skips verify and publish.
+  build:
+    needs: resolve
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: linux-x64
+            runner: ubuntu-24.04
+          - target: linux-arm64
+            runner: ubuntu-24.04-arm
+    name: build (${{ matrix.target }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 150
+    permissions:
+      contents: read
+    env:
+      TARGET: ${{ matrix.target }}
+    steps:
       # The build script, from the branch this workflow runs on.
       - name: Checkout build script
         uses: actions/checkout@v4
@@ -156,7 +182,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           path: source
-          ref: ${{ steps.resolve.outputs.sha }}
+          ref: ${{ needs.resolve.outputs.sha }}
           fetch-depth: 1
           persist-credentials: false
 
@@ -181,11 +207,12 @@ jobs:
 
       - name: Build sealed release
         env:
-          SHA: ${{ steps.resolve.outputs.sha }}
+          SHA: ${{ needs.resolve.outputs.sha }}
         run: |
           "$HOST_PYTHON" -B builder/.github/scripts/sealed_release_build.py \
             --source "$GITHUB_WORKSPACE/source" \
             --sha "$SHA" \
+            --target "$TARGET" \
             --out "$RELEASES_ROOT/$SHA" \
             --cache "$BUILD_DIR/uv-cache"
           du -sh "$RELEASES_ROOT/$SHA"
@@ -195,124 +222,57 @@ jobs:
 
       - name: Package
         env:
-          SHA: ${{ steps.resolve.outputs.sha }}
+          SHA: ${{ needs.resolve.outputs.sha }}
         run: |
           set -euo pipefail
+          built="$(jq -r .target "$RELEASES_ROOT/$SHA/release.json")"
+          if [ "$built" != "$TARGET" ]; then
+            echo "::error::release.json target is $built, this leg builds $TARGET"; exit 1
+          fi
           dist="$RUNNER_TEMP/dist"
           mkdir -p "$dist"
-          asset="hermes-sealed-$SHA-linux-x64.tar.gz"
+          asset="hermes-sealed-$SHA-$TARGET.tar.gz"
           tar -C "$RELEASES_ROOT" --sort=name --owner=0 --group=0 --numeric-owner \
             -czf "$dist/$asset" "$SHA"
-          (cd "$dist" && sha256sum "$asset" > checksums.txt)
-          cat "$dist/checksums.txt"
+          (cd "$dist" && sha256sum "$asset" > "$asset.sha256")
+          cp "$RELEASES_ROOT/$SHA/release.json" "$dist/release-$TARGET.json"
+          cat "$dist/$asset.sha256"
           ls -l "$dist"
           echo "DIST=$dist" >> "$GITHUB_ENV"
 
-      - name: Publish release
-        env:
-          GH_TOKEN: ${{ github.token }}
-          SHA: ${{ steps.resolve.outputs.sha }}
-          TAG: ${{ steps.resolve.outputs.tag }}
-        run: |
-          set -euo pipefail
-          flags=(--latest=false)
-          case "$TAG" in deploy/*) ;; *) flags+=(--prerelease) ;; esac
-          python3 - "$RELEASES_ROOT/$SHA/release.json" > "$RUNNER_TEMP/notes.md" <<'PY'
-          import json, sys
-          release = json.load(open(sys.argv[1]))
-          tools = ", ".join(f"{t['name']} {t['version']}" for t in release["tools"])
-          print(f"Sealed release of `{release['sha']}` for {release['target']}.\n")
-          print(f"- Python {release['python']}, extras: {', '.join(release['extras'])}")
-          print(f"- Tools: {tools}")
-          print(f"- Built {release['built_at']}")
-          PY
-          # This line is unique to the run attempt; it is how the cleanup below
-          # recognises the release this run created.
-          run_line="- Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT"
-          echo "$run_line" >> "$RUNNER_TEMP/notes.md"
-          api="repos/$GITHUB_REPOSITORY"
-          # The commit the tag names now, peeling an annotated tag once as the
-          # resolve step does. Fails if the tag is gone or a lookup fails.
-          tag_target() {
-            local out kind target
-            out="$(gh api "$api/git/ref/tags/$TAG" --jq '.object.type + " " + .object.sha')" || return 1
-            read -r kind target <<<"$out"
-            if [ "$kind" = tag ]; then
-              target="$(gh api "$api/git/tags/$target" --jq .object.sha)" || return 1
-            fi
-            [ -n "$target" ] || return 1
-            printf '%s\n' "$target"
-          }
-          # The resolve step checked the tag before a build of an hour or more.
-          # Check it again now, so a tag moved or a release added meanwhile
-          # stops the publish instead of being found after it.
-          if ! target="$(tag_target)"; then
-            echo "::error::could not resolve $TAG before publishing; nothing published"
-            exit 1
-          fi
-          if [ "$target" != "$SHA" ]; then
-            echo "::error::$TAG now points at $target, not $SHA; nothing published"
-            exit 1
-          fi
-          if out="$(gh api "$api/releases/tags/$TAG" 2>&1)"; then
-            echo "::error::$TAG gained a release during the build; nothing published"
-            exit 1
-          elif ! grep -q "HTTP 404" <<<"$out"; then
-            echo "::error::release lookup for $TAG failed: $out; nothing published"
-            exit 1
-          fi
-          echo "tag: $TAG still at $SHA with no release"
-          # Never create a ref here: --verify-tag fails if the tag is gone.
-          gh release create "$TAG" \
-            --repo "$GITHUB_REPOSITORY" \
-            --verify-tag \
-            --title "$TAG" \
-            --notes-file "$RUNNER_TEMP/notes.md" \
-            "${flags[@]}" \
-            "$DIST/hermes-sealed-$SHA-linux-x64.tar.gz" \
-            "$DIST/checksums.txt"
-          # gh release create does not return the release id. Read it back at
-          # once and keep it only if the body carries this run's line, so the
-          # cleanup below can only ever touch the release this run created.
-          release_id=""
-          if out="$(gh api "$api/releases/tags/$TAG")"; then
-            release_id="$(jq -r --arg line "$run_line" \
-              'select(.body // "" | split("\n") | map(rtrimstr("\r")) | any(. == $line)) | .id' <<<"$out")" || release_id=""
-          fi
-          [[ "$release_id" =~ ^[0-9]+$ ]] || release_id=""
-          # GitHub cannot bind a release to a tag's commit, so the tag can still
-          # move between the check above and the create. Withdraw this run's
-          # release, by id, if it did; the tag itself is left for the operator.
-          if ! target="$(tag_target)"; then
-            echo "::error::published $TAG but could not re-read it; check the release by hand"
-            exit 1
-          fi
-          if [ "$target" != "$SHA" ]; then
-            if [ -z "$release_id" ]; then
-              echo "::error::$TAG moved to $target while publishing and this run's release could not be identified; nothing deleted, check the release by hand"
-              exit 1
-            fi
-            if ! on_tag="$(gh api "$api/releases/$release_id" --jq .tag_name)" || [ "$on_tag" != "$TAG" ]; then
-              echo "::error::$TAG moved to $target while publishing and release $release_id is no longer on $TAG; nothing deleted, check the release by hand"
-              exit 1
-            fi
-            gh api -X DELETE "$api/releases/$release_id"
-            echo "::error::$TAG moved to $target while publishing; release $release_id withdrawn, tag left in place"
-            exit 1
-          fi
-          echo "Published $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/tag/$TAG"
+      # Handed to verify and publish inside this run; nothing is public yet.
+      - name: Upload build
+        uses: actions/upload-artifact@v4
+        with:
+          name: sealed-${{ matrix.target }}
+          path: ${{ env.DIST }}
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 3
 
-  # Clean verification: no source checkout, no build cache, fresh runner.
-  # Everything it knows about the release comes from the published assets.
+  # Clean verification of each target on a runner of its own architecture:
+  # no source checkout, no build cache, fresh runner. Everything it knows
+  # about the release comes from the built assets. It runs before publish, so
+  # a target that fails here leaves nothing published.
   verify:
-    needs: build
-    runs-on: ubuntu-24.04
+    needs: [resolve, build]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: linux-x64
+            runner: ubuntu-24.04
+          - target: linux-arm64
+            runner: ubuntu-24.04-arm
+    name: verify (${{ matrix.target }})
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     permissions:
       contents: read
     env:
-      SHA: ${{ needs.build.outputs.sha }}
-      TAG: ${{ needs.build.outputs.tag }}
+      SHA: ${{ needs.resolve.outputs.sha }}
+      TARGET: ${{ matrix.target }}
+      ASSET: hermes-sealed-${{ needs.resolve.outputs.sha }}-${{ matrix.target }}.tar.gz
       GH_TOKEN: ${{ github.token }}
       CHECK_USER: relcheck
     steps:
@@ -326,22 +286,29 @@ jobs:
             if [ -e "$path" ]; then echo "::error::$path exists before download"; exit 1; fi
           done
           echo "clean: empty workspace, no uv cache, no $RELEASES_ROOT"
+          case "$(uname -m)" in x86_64) arch=linux-x64 ;; aarch64) arch=linux-arm64 ;; *) arch="$(uname -m)" ;; esac
+          if [ "$arch" != "$TARGET" ]; then echo "::error::runner is $arch, verifying $TARGET"; exit 1; fi
+          echo "runner: $(uname -m), verifying $TARGET"
 
-      - name: "A1: download and verify checksum"
+      - name: Download the built asset
+        uses: actions/download-artifact@v4
+        with:
+          name: sealed-${{ matrix.target }}
+          path: ${{ runner.temp }}/assets
+
+      - name: "A1: verify checksum"
         run: |
           set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/assets" && cd "$RUNNER_TEMP/assets"
-          gh release download "$TAG" --repo "$GITHUB_REPOSITORY"
+          cd "$RUNNER_TEMP/assets"
           ls -l
-          sha256sum -c checksums.txt
-          asset="hermes-sealed-$SHA-linux-x64.tar.gz"
-          test "$(awk '{print $2}' checksums.txt)" = "$asset"
-          echo "A1 ok: $asset $(stat -c %s "$asset") bytes, sha256 matches checksums.txt"
+          sha256sum -c "$ASSET.sha256"
+          test "$(awk '{print $2}' "$ASSET.sha256")" = "$ASSET"
+          echo "A1 ok: $ASSET $(stat -c %s "$ASSET") bytes, sha256 matches $ASSET.sha256"
 
       - name: Unpack at the final path as root
         run: |
           set -euo pipefail
-          asset="$RUNNER_TEMP/assets/hermes-sealed-$SHA-linux-x64.tar.gz"
+          asset="$RUNNER_TEMP/assets/$ASSET"
           tops="$(tar -tzf "$asset" | cut -d/ -f1 | sort -u)"
           if [ "$tops" != "$SHA" ]; then echo "::error::tarball top dirs: $tops"; exit 1; fi
           sudo mkdir -p "$RELEASES_ROOT"
@@ -372,8 +339,10 @@ jobs:
             "$R/hermes-agent/install-stamp.json" >/dev/null || fail "stamp: $(cat "$R/hermes-agent/install-stamp.json")"
           echo "A2 repo: no .git; install-stamp updateMechanism=external commit=$SHA"
 
-          jq -e --arg sha "$SHA" '
+          jq -e --arg sha "$SHA" --arg target "$TARGET" '
             .sha == $sha and (.built_at | length > 0) and .extras == ["all", "messaging", "exa"]
+            and .target == $target
+            and ([.tools[] | select(.name == "python" or .name == "node") | .entry | endswith("-" + $target)] == [true, true])
             and (.python | startswith("3.14"))
             and ([.tools[].name] as $n | ["python","node","npm","uv","ripgrep","ffmpeg"] | all(. as $t | $n | index($t)))
           ' "$R/release.json" >/dev/null || fail "release.json: $(cat "$R/release.json")"
@@ -382,7 +351,7 @@ jobs:
           dirs="$(find "$R/tools" -mindepth 1 -maxdepth 1 \( -name 'llamacpp-*' -o -name 'cua-driver*' \))"
           [ -z "$dirs" ] || fail "excluded tool entries in tools/: $dirs"
           echo "A2 tools trimmed: no llamacpp-* or cua-driver in facts.json or tools/"
-          echo "A2 release.json: sha, built_at, extras [all, messaging, exa], python $(jq -r .python "$R/release.json"), tools $(jq -c '[.tools[].name]' "$R/release.json")"
+          echo "A2 release.json: sha, built_at, target $TARGET (node and python entries end in -$TARGET), extras [all, messaging, exa], python $(jq -r .python "$R/release.json"), tools $(jq -c '[.tools[].name]' "$R/release.json")"
 
           private="$(find "$R" ! -type l -perm 0600 | head -5)"
           [ -z "$private" ] || fail "mode 0600: $private"
@@ -519,21 +488,29 @@ jobs:
             || fail "imports through venv/bin/python"
 
           launch '
-          import os, shutil, pm
+          import json, os, shutil, pm
           problems = pm.activate()
           print("A3 pm.activate problems:", problems)
           for tool in ("rg", "ffmpeg", "node"):
               print("A3 which", tool, "->", shutil.which(tool))
           # agent-browser is selected from PM facts, not PATH (its binary is
-          # agent-browser-<target>), so use the browser tool resolver.
-          from tools.browser_tool_install import _find_agent_browser
-          print("A3 which agent-browser ->", _find_agent_browser(validate=False))
+          # agent-browser-<target>), so use the browser tool resolver. Upstream
+          # removed agent-browser and its resolver (68500d9ff9); a release
+          # without it in release.json is reported, not failed.
+          carried = {t["name"] for t in json.load(open(os.environ["R"] + "/release.json"))["tools"]}
+          if "agent-browser" in carried:
+              from tools.browser_tool_install import _find_agent_browser
+              print("A3 which agent-browser ->", _find_agent_browser(validate=False))
+          else:
+              print("A3 agent-browser: not in this release")
           chromium = pm.installed_package("chromium")
           print("A3 chromium binary:", chromium.binary if chromium else None)
           ' > "$HOME/tools.txt"
           cat "$HOME/tools.txt"
           grep -q "problems: \[\]" "$HOME/tools.txt" || fail "pm.activate reported problems"
-          for tool in rg ffmpeg node agent-browser; do
+          checked=(rg ffmpeg node)
+          if grep -q "^A3 which agent-browser " "$HOME/tools.txt"; then checked+=(agent-browser); fi
+          for tool in "${checked[@]}"; do
             path="$(awk -v t="$tool" '$3 == t {print $5}' "$HOME/tools.txt")"
             case "$path" in "$R"/*) ;; *) fail "$tool resolves to '$path', not the release" ;; esac
           done
@@ -544,7 +521,7 @@ jobs:
           echo "A3 ffmpeg: $("$ff_bin" -version | head -1)"
           echo "A3 node: $("$node_bin" --version)"
           ab_bin="$(awk '$3 == "agent-browser" {print $5}' "$HOME/tools.txt")"
-          echo "A3 agent-browser: $("$ab_bin" --version 2>&1 | head -1)"
+          if [ -n "$ab_bin" ]; then echo "A3 agent-browser: $("$ab_bin" --version 2>&1 | head -1)"; fi
           SH
           sudo unshare --net -- sudo -u "$CHECK_USER" -H env -i \
             HOME="/home/$CHECK_USER" PATH=/usr/bin:/bin LANG=C.UTF-8 \
@@ -556,3 +533,159 @@ jobs:
           echo "A3 find -newer sweep: no writes into $R"
           echo "A3 user state written instead under /home/$CHECK_USER:"
           sudo find "/home/$CHECK_USER" -maxdepth 3 -newer "$RUNNER_TEMP/a3-marker" | head -20
+
+  # Publishes only when every target built and passed verify: one release,
+  # both tarballs, one checksums.txt covering both.
+  publish:
+    needs: [resolve, verify]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    steps:
+      - name: Download the built assets
+        uses: actions/download-artifact@v4
+        with:
+          pattern: sealed-*
+          path: ${{ runner.temp }}/dist
+          merge-multiple: true
+
+      - name: Checksums
+        env:
+          SHA: ${{ needs.resolve.outputs.sha }}
+        run: |
+          set -euo pipefail
+          dist="$RUNNER_TEMP/dist"
+          cd "$dist"
+          ls -l
+          assets=()
+          for target in $TARGETS; do assets+=("hermes-sealed-$SHA-$target.tar.gz"); done
+          sha256sum "${assets[@]}" > checksums.txt
+          # The same bytes each verify job checked.
+          for asset in "${assets[@]}"; do cat "$asset.sha256"; done | cmp - checksums.txt
+          cat checksums.txt
+          echo "DIST=$dist" >> "$GITHUB_ENV"
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ needs.resolve.outputs.sha }}
+          TAG: ${{ needs.resolve.outputs.tag }}
+        run: |
+          set -euo pipefail
+          flags=(--latest=false)
+          case "$TAG" in deploy/*) ;; *) flags+=(--prerelease) ;; esac
+          assets=()
+          releases=()
+          for target in $TARGETS; do
+            assets+=("$DIST/hermes-sealed-$SHA-$target.tar.gz")
+            releases+=("$target=$DIST/release-$target.json")
+          done
+          python3 - "$SHA" "${releases[@]}" > "$RUNNER_TEMP/notes.md" <<'PY'
+          import json, sys
+          sha, pairs = sys.argv[1], [arg.split("=", 1) for arg in sys.argv[2:]]
+          releases = []
+          for target, path in pairs:
+              release = json.load(open(path))
+              if release["sha"] != sha or release["target"] != target:
+                  sys.exit(f"{path}: sha {release['sha']} target {release['target']}, expected {sha} {target}")
+              releases.append(release)
+          print(f"Sealed release of `{sha}` for {', '.join(r['target'] for r in releases)}.\n")
+          print(f"- Extras: {', '.join(releases[0]['extras'])}")
+          for release in releases:
+              tools = ", ".join(f"{t['name']} {t['version']}" for t in release["tools"])
+              print(f"- {release['target']}: Python {release['python']}, built {release['built_at']}. Tools: {tools}")
+          PY
+          # This line is unique to the run attempt; it is how the cleanup below
+          # recognises the release this run created.
+          run_line="- Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT"
+          echo "$run_line" >> "$RUNNER_TEMP/notes.md"
+          api="repos/$GITHUB_REPOSITORY"
+          # The commit the tag names now, peeling an annotated tag once as the
+          # resolve step does. Fails if the tag is gone or a lookup fails.
+          tag_target() {
+            local out kind target
+            out="$(gh api "$api/git/ref/tags/$TAG" --jq '.object.type + " " + .object.sha')" || return 1
+            read -r kind target <<<"$out"
+            if [ "$kind" = tag ]; then
+              target="$(gh api "$api/git/tags/$target" --jq .object.sha)" || return 1
+            fi
+            [ -n "$target" ] || return 1
+            printf '%s\n' "$target"
+          }
+          # The resolve step checked the tag before a build of an hour or more.
+          # Check it again now, so a tag moved or a release added meanwhile
+          # stops the publish instead of being found after it.
+          if ! target="$(tag_target)"; then
+            echo "::error::could not resolve $TAG before publishing; nothing published"
+            exit 1
+          fi
+          if [ "$target" != "$SHA" ]; then
+            echo "::error::$TAG now points at $target, not $SHA; nothing published"
+            exit 1
+          fi
+          if out="$(gh api "$api/releases/tags/$TAG" 2>&1)"; then
+            echo "::error::$TAG gained a release during the build; nothing published"
+            exit 1
+          elif ! grep -q "HTTP 404" <<<"$out"; then
+            echo "::error::release lookup for $TAG failed: $out; nothing published"
+            exit 1
+          fi
+          echo "tag: $TAG still at $SHA with no release"
+          # Never create a ref here: --verify-tag fails if the tag is gone.
+          gh release create "$TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --verify-tag \
+            --title "$TAG" \
+            --notes-file "$RUNNER_TEMP/notes.md" \
+            "${flags[@]}" \
+            "${assets[@]}" \
+            "$DIST/checksums.txt"
+          # gh release create does not return the release id. Read it back at
+          # once and keep it only if the body carries this run's line, so the
+          # cleanup below can only ever touch the release this run created.
+          release_id=""
+          if out="$(gh api "$api/releases/tags/$TAG")"; then
+            release_id="$(jq -r --arg line "$run_line" \
+              'select(.body // "" | split("\n") | map(rtrimstr("\r")) | any(. == $line)) | .id' <<<"$out")" || release_id=""
+          fi
+          [[ "$release_id" =~ ^[0-9]+$ ]] || release_id=""
+          # Withdraw this run's release, by id, and fail; the tag itself is
+          # left for the operator.
+          withdraw() {
+            if [ -z "$release_id" ]; then
+              echo "::error::$1 and this run's release could not be identified; nothing deleted, check the release by hand"
+              exit 1
+            fi
+            if ! on_tag="$(gh api "$api/releases/$release_id" --jq .tag_name)" || [ "$on_tag" != "$TAG" ]; then
+              echo "::error::$1 and release $release_id is no longer on $TAG; nothing deleted, check the release by hand"
+              exit 1
+            fi
+            gh api -X DELETE "$api/releases/$release_id"
+            echo "::error::$1; release $release_id withdrawn, tag left in place"
+            exit 1
+          }
+          # GitHub cannot bind a release to a tag's commit, so the tag can still
+          # move between the check above and the create. Withdraw this run's
+          # release if it did.
+          if ! target="$(tag_target)"; then
+            echo "::error::published $TAG but could not re-read it; check the release by hand"
+            exit 1
+          fi
+          if [ "$target" != "$SHA" ]; then
+            withdraw "$TAG moved to $target while publishing"
+          fi
+          # Verify checked this run's artifacts. Read the release back and
+          # withdraw it unless it serves exactly those files and bytes.
+          published="$RUNNER_TEMP/published"
+          mkdir "$published"
+          if ! gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir "$published"; then
+            withdraw "could not download $TAG back after publishing"
+          fi
+          want="$(for asset in "${assets[@]}" checksums.txt; do basename "$asset"; done | sort)"
+          if [ "$(find "$published" -mindepth 1 -maxdepth 1 -printf '%f\n' | sort)" != "$want" ] || ! cmp -s "$DIST/checksums.txt" "$published/checksums.txt" \
+            || ! (cd "$published" && sha256sum -c checksums.txt); then
+            withdraw "$TAG does not serve the verified assets"
+          fi
+          echo "read back: $TAG serves ${want//$'\n'/ }, sha256 as verified"
+          echo "Published $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/tag/$TAG"
