@@ -4,25 +4,30 @@ name: Sync upstream
 # `main` as an integration branch so a new machine can just `git clone`
 # and check out `main` to get a runtime-ready fork.
 #
-# `FEATURE_BRANCHES` carries fork patches that have an open upstream PR.
-# As of 2026-05-14 we carry the WhatsApp stack tip plus several independent branches:
+# `FEATURE_BRANCHES` carries fork patches. Some still have an open upstream PR; most
+# are fork-only now (their upstream PRs were closed on 2026-10-12). As of 2026-11-24:
 #
 #   fix/busy-path-pre-gateway-dispatch-upstream → #16489 busy-path
-#   pre_gateway_dispatch + interrupt_text snapshot (open). Owner-forward
-#   base (#16445/#16485) landed upstream via #55584.
+#   pre_gateway_dispatch (open). Owner-forward base (#16445/#16485) landed
+#   upstream via #55584.
 #
-#   feature/end-turn-tool-contract-upstream → #20713 terminal plugin tools can
-#   close a turn without triggering the empty-after-tools nudge path.
+#   feature/end-turn-tool-contract-upstream → terminal plugin tools can close a
+#   turn without triggering the empty-after-tools nudge path. #20713 closed
+#   2026-10-12; fork-only.
 #
-#   fix/diagnostic-status-leak-and-end-turn-nudge → #24853 diagnostic status
-#   leak fix (open).
+#   #24853 diagnostic status leak (was fix/diagnostic-status-leak-and-end-turn-
+#   nudge) closed 2026-10-12. Upstream now buffers and suppresses recovery
+#   statuses itself (display.suppress_warning_notifications), and the carry's
+#   12 Nov rebase broke the reconnect watcher (ImportError). Dropped from
+#   FEATURE_BRANCHES 2026-11-24; branch kept on origin as a rollback.
 #
 #   #25119 queued follow-up MEDIA (was fix/queued-followup-media-delivery-
 #   upstream) closed without merge. Landed via #82162. Dropped from
 #   FEATURE_BRANCHES 2026-09-06.
 #
-#   fix/undelivered-tool-call-content → #53544 recover material assistant
-#   content generated during tool calls when interim delivery is disabled.
+#   fix/undelivered-tool-call-content → recover material assistant content
+#   generated during tool calls when interim delivery is disabled. #53544
+#   closed 2026-10-12; fork-only.
 #
 #   fix/telegram-forum-topic-reply-anchor → #61538 quote-reply triggering
 #   message in Telegram forum/supergroup topics (open).
@@ -59,19 +64,27 @@ name: Sync upstream
 #   Upstream landed the same fix as #127865 (7e247c44a6, b8e986cb2b). Dropped
 #   from FEATURE_BRANCHES 2026-10-19.
 #
-#   feat/compression-summary-instructions → #89399 configurable
-#   compression.summary_instructions (open).
+#   feat/compression-summary-instructions → configurable
+#   compression.summary_instructions. #89399 closed 2026-10-12; fork-only.
 #
-#   feat/telegram-plugin-callback-handlers → #96053 plugin
-#   callback_query handlers and send() markup metadata (open).
+#   feat/telegram-plugin-callback-handlers → plugin send() markup metadata.
+#   #96053 closed 2026-10-12; fork-only.
+#
+#   fix/opencode-go-reasoning-effort-coverage → reasoning_effort for every
+#   OpenCode Go model that takes one. #126103 closed 2026-10-12; fork-only.
 #
 #   fix/cancelled-turn-interrupts-agent → a cancelled turn task hard-
 #   interrupts the agent it was awaiting, so its executor thread stops calling
 #   the model and running tools. Upstream PR not opened yet.
 #
-#   fix/gateway-log-no-message-text → the INFO inbound-message log line drops
-#   message text and display name (DEBUG keeps them); memory_trim.log_every_n
-#   defaults to 60. Upstream PR not opened yet.
+#   fix/gateway-log-no-message-text (INFO inbound-message log line without
+#   message text) is no longer carried. Upstream 53a5c32f18 keeps message text
+#   out of INFO logs; upstream's memory_trim.log_every_n (default 1) is set per
+#   tenant for the quieter trim. Dropped from FEATURE_BRANCHES 2026-11-24;
+#   branch kept on origin as a rollback.
+#
+#   feat/web-search-depth → optional Exa search knobs and web_search depth
+#   (fork #90, #92). Upstream PRs not opened.
 #
 #   #18413 OpenCode auxiliary /v1 strip (was fix/auxiliary-opencode-strip-
 #   trailing-v1) closed without merge — shared Anthropic client strips
@@ -100,10 +113,19 @@ name: Sync upstream
 # come back into `main` from a stale branch (see FORK.md).
 #
 # Each run rebases the carried branches only in the runner and builds `main`
-# from those local rebases; it never pushes a carried branch. Each one is the
-# head of an open upstream PR, and a daily force-push re-runs Nous CI on it.
+# from those local rebases; it never pushes a carried branch. Some are the head
+# of an open upstream PR, and a daily force-push would re-run Nous CI on them.
 # A carried branch moves only when someone resolves a conflict on it and
 # pushes it (see FORK.md recovery).
+#
+# The carry test gate (.github/scripts/carry_test_gate.py) runs upstream's
+# tests/gateway and tests/agent plus every carried test file on the rebuilt
+# `main`, and plain upstream's verdict on each failing file, before anything is
+# pushed. A fork-only failure, an undefined name (ruff F821/F823) or a local
+# import that does not resolve, where upstream has neither, stops the sync. A clean text merge is not proof: on 12-15 Nov
+# rebases that applied cleanly broke the reconnect watcher and a follow-up path.
+# After the push it records a `carry-test-gate` commit status on `main`;
+# sealed-release.yml refuses a commit without it.
 #
 # Runs daily at 03:00 UTC and on manual dispatch. See FORK.md for the
 # maintenance model and recovery procedure.
@@ -114,13 +136,15 @@ on:
   workflow_dispatch:
     inputs:
       skip_tests:
-        description: "Skip pytest (fast path for testing the workflow itself)"
+        description: "Skip the focused and plugin tests (the carry test gate always runs)"
         required: false
         default: "false"
 
 permissions:
   contents: write
   issues: write
+  # Record the carry test gate on the pushed `main` commit (sealed-release.yml reads it).
+  statuses: write
   # Disable non-allowlisted workflows (step after the push).
   actions: write
 
@@ -146,21 +170,21 @@ env:
   # Currently:
   # - fix/busy-path-pre-gateway-dispatch-upstream is independent (PR #16489);
   #   owner-forward ancestors landed upstream via #55584.
-  # - fix/diagnostic-status-leak-and-end-turn-nudge is independent (PR #24853).
-  # - fix/undelivered-tool-call-content is independent (PR #53544).
+  # - feature/end-turn-tool-contract-upstream is independent (fork-only).
+  # - fix/undelivered-tool-call-content is independent (fork-only). It reads the
+  #   end_turn carry's per-row flag by getattr, so it also builds alone.
   # - fix/telegram-forum-topic-reply-anchor is independent (PR #61538).
-  # - feat/compression-summary-instructions is independent (PR #89399).
-  # - feat/telegram-plugin-callback-handlers is independent (PR #96053).
-  # - fix/opencode-go-reasoning-effort-coverage is independent (PR #126103).
-  # - fix/cancelled-turn-interrupts-agent is independent (upstream PR pending).
-  # - fix/gateway-log-no-message-text is independent (upstream PR pending).
+  # - feat/compression-summary-instructions is independent (fork-only).
+  # - feat/telegram-plugin-callback-handlers is independent (fork-only).
+  # - fix/opencode-go-reasoning-effort-coverage is independent (fork-only).
+  # - fix/cancelled-turn-interrupts-agent is independent (fork-only).
   # - feat/web-search-depth is the tip of a two-PR stack (upstream PRs pending):
   #   fork #90 feat/exa-3-provider-knobs (optional web.exa type, dynamic
   #   highlights, max_age_hours and extract cap; exa-py 2.26.0), then fork #92
   #   (optional web_search depth quick | standard | deep, capped by
   #   web.max_depth, default standard). Listing the tip carries both; do not
   #   also list feat/exa-3-provider-knobs.
-  FEATURE_BRANCHES: "fix/busy-path-pre-gateway-dispatch-upstream feature/end-turn-tool-contract-upstream fix/diagnostic-status-leak-and-end-turn-nudge fix/undelivered-tool-call-content fix/telegram-forum-topic-reply-anchor feat/compression-summary-instructions feat/telegram-plugin-callback-handlers fix/opencode-go-reasoning-effort-coverage fix/cancelled-turn-interrupts-agent fix/gateway-log-no-message-text feat/web-search-depth"
+  FEATURE_BRANCHES: "fix/busy-path-pre-gateway-dispatch-upstream feature/end-turn-tool-contract-upstream fix/undelivered-tool-call-content fix/telegram-forum-topic-reply-anchor feat/compression-summary-instructions feat/telegram-plugin-callback-handlers fix/opencode-go-reasoning-effort-coverage fix/cancelled-turn-interrupts-agent feat/web-search-depth"
   PLUGIN_REPO: pebble-tech/hermes-plugin-gateway-policy
   # Workflows allowed to run on this fork. Two mechanisms use this list:
   # - Strip: the rebuild step removes every other workflow file from integration
@@ -174,7 +198,11 @@ env:
 jobs:
   sync:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # The carry test gate is most of the run. On Linux (Python 3.14, 3,412 files)
+    # it took 99 min at 6 jobs: about 33,600 worker-seconds of tests, so roughly
+    # 140 min of tests on a 4-vCPU runner, plus setup. 240 keeps headroom for a
+    # slow day; GitHub's hosted-runner job limit is 360 min.
+    timeout-minutes: 240
     steps:
       - name: Checkout fork (full history)
         uses: actions/checkout@v4
@@ -348,15 +376,12 @@ jobs:
           echo "::endgroup::"
 
       - name: Install uv
-        if: inputs.skip_tests != 'true'
         uses: astral-sh/setup-uv@v5
 
       - name: Install ripgrep
-        if: inputs.skip_tests != 'true'
         run: sudo apt-get install -y ripgrep
 
       - name: Install hermes-agent (from integration branch)
-        if: inputs.skip_tests != 'true'
         run: |
           # Upstream moved dev deps to [dependency-groups]; `.[all,dev]` no longer
           # installs pytest. Match upstream CI: locked sync on Python 3.14.
@@ -390,6 +415,38 @@ jobs:
             exit 1
           fi
 
+      # Fork-vs-upstream gate. Runs upstream's tests/gateway and tests/agent and
+      # every carried test file on the rebuilt `main`, then plain upstream at the
+      # same base on each failing file; only a fork-only failure (one that also
+      # fails when re-run alone), an upstream test file the rebuilt `main` lacks, a
+      # fork-only ruff F821/F823 finding or a fork-only unresolved local import fails it.
+      # It runs on every sync: skip_tests does not skip it.
+      # Branches pushed by hand or by the Cursor recovery automation reach `main`
+      # only through this step. See the job's timeout comment for its runtime.
+      - name: Check out upstream base for the carry test gate
+        run: |
+          git worktree add --detach "$RUNNER_TEMP/upstream-base" "$upstream_sha"
+          # From the rebased ops-overlay, not the candidate tree: a carry cannot
+          # change the gate that judges it.
+          git show "$OPS_OVERLAY_BRANCH:.github/scripts/carry_test_gate.py" > "$SYNC_SCRIPTS/carry_test_gate.py"
+
+      - name: Carry test gate (fork-only failures)
+        id: carry_gate
+        env:
+          OPENROUTER_API_KEY: ""
+          OPENAI_API_KEY: ""
+          NOUS_API_KEY: ""
+        run: |
+          source .venv/bin/activate
+          if ! python "$SYNC_SCRIPTS/carry_test_gate.py" \
+            --candidate "$GITHUB_WORKSPACE" \
+            --base "$RUNNER_TEMP/upstream-base" \
+            --jobs "$(nproc)" \
+            --report "$RUNNER_TEMP/carry-test-gate.json"; then
+            bash "$SYNC_SCRIPTS/record-sync-failure.sh" carry-test-gate "$INTEGRATION_BRANCH"
+            exit 1
+          fi
+
       - name: Smoke-test gateway-policy plugin against integration branch
         if: inputs.skip_tests != 'true'
         run: |
@@ -402,6 +459,24 @@ jobs:
             bash "$SYNC_SCRIPTS/record-sync-failure.sh" plugin-smoke-test "$INTEGRATION_BRANCH"
             exit 1
           fi
+
+      # Gate evidence sealed-release.yml requires, uploaded before the push: an
+      # artifact named for the `main` the gate tested. After the push, a status on that
+      # commit points to this run. Release trusts the status only after it finds this
+      # run's artifact, its gate step's success and the run's success; no other run can
+      # add an artifact to this one.
+      - name: Name carry test gate evidence
+        id: gate_evidence
+        if: steps.carry_gate.outcome == 'success'
+        run: echo "sha=$(git rev-parse "$INTEGRATION_BRANCH")" >> "$GITHUB_OUTPUT"
+
+      - name: Upload carry test gate evidence
+        if: steps.carry_gate.outcome == 'success'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: carry-test-gate-${{ steps.gate_evidence.outputs.sha }}
+          path: ${{ runner.temp }}/carry-test-gate.json
+          if-no-files-found: error
 
       - name: Configure push credentials
         env:
@@ -418,8 +493,10 @@ jobs:
           git config --local credential.helper ""
           git remote set-url origin "https://x-access-token:${SYNC_PUSH_TOKEN}@github.com/${{ github.repository }}.git"
 
-      # FEATURE_BRANCHES are not pushed: see the header comment.
+      # FEATURE_BRANCHES are not pushed: see the header comment. Nothing is pushed
+      # unless the carry test gate passed, whatever skip_tests says.
       - name: Push rebased ops-overlay and integration branch
+        if: steps.carry_gate.outcome == 'success'
         run: |
           if ! git push --force-with-lease origin "$OPS_OVERLAY_BRANCH"; then
             bash "$SYNC_SCRIPTS/record-sync-failure.sh" push "$OPS_OVERLAY_BRANCH"
@@ -429,6 +506,22 @@ jobs:
             bash "$SYNC_SCRIPTS/record-sync-failure.sh" push "$INTEGRATION_BRANCH"
             exit 1
           fi
+
+      # The pointer to this run's evidence (see "Name carry test gate evidence").
+      - name: Record carry test gate on main
+        if: steps.carry_gate.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          sha="${{ steps.gate_evidence.outputs.sha }}"
+          if ! gh api -X POST "repos/${{ github.repository }}/statuses/$sha" \
+            -f state=success -f context=carry-test-gate \
+            -f description="no fork-only failures vs upstream ${upstream_sha:0:12}" \
+            -f target_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" >/dev/null; then
+            bash "$SYNC_SCRIPTS/record-sync-failure.sh" record-gate "$INTEGRATION_BRANCH"
+            exit 1
+          fi
+          echo "carry-test-gate: success recorded on $sha"
 
       # `main` is stripped of upstream workflows, but `ops-overlay`, the carried
       # branches and fork PRs keep them; this keeps them from running. A new
@@ -520,8 +613,9 @@ jobs:
               `1. Rebase conflict on a feature branch — upstream refactored the code the patch touches.`,
               `2. Cherry-pick conflict when rebuilding \`main\` — two feature branches touch the same lines.`,
               `3. Focused tests failed — upstream changed a signature the tests depend on.`,
-              `4. Plugin smoke-test failed — \`pebble-tech/hermes-plugin-gateway-policy\` no longer loads cleanly.`,
-              `5. Rebase conflict on \`ops-overlay\` — rare; only touches \`.github/workflows/sync-upstream.yml\` and \`FORK.md\`.`,
+              `4. Carry test gate failed — a carry breaks a test upstream passes, or adds an undefined name. The run summary lists each one.`,
+              `5. Plugin smoke-test failed — \`pebble-tech/hermes-plugin-gateway-policy\` no longer loads cleanly.`,
+              `6. Rebase conflict on \`ops-overlay\` — rare; only touches \`.github/workflows/sync-upstream.yml\` and \`FORK.md\`.`,
               ``,
               `If upstream absorbed the patch (closed/superseded PR), drop the branch from \`FEATURE_BRANCHES\` via \`ops-overlay\` — do not rebase the dead branch.`,
               ``,
