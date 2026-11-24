@@ -12,19 +12,24 @@ on plain upstream at the same base, or an undefined name (ruff F821/F823) the ca
      is order-dependent noise (batched telegram tests are, even on upstream): reported, not fatal.
   4. ruff F821/F823 on both trees; findings are compared by file, code and message, so a line
      shift is not a new finding.
+  5. Every `from <local module> import <name>` in both trees, lazy imports inside functions
+     included, is resolved statically against the tree's own files. An import the candidate
+     cannot resolve and the base can fails the gate (compared by file, module and name). This is
+     the class that broke the reconnect watcher: a lazy import no test reaches.
 
 Scope: every test_*.py under each --scope directory, plus every test file the candidate adds or
 changes against the base (the carries' own tests, wherever they live).
 
 usage: carry_test_gate.py --candidate DIR --base DIR [--python PY] [--ruff CMD] [--jobs N] [--report FILE]
 
-Exit 0 when there is no fork-only failure and no fork-only ruff finding, 1 otherwise, 2 on a
+Exit 0 when there is no fork-only failure, ruff finding or unresolved import, 1 otherwise, 2 on a
 usage or setup error. Stdlib only: it runs from a copy outside the trees it checks.
 """
 
 from __future__ import annotations
 
 import argparse
+import ast
 import collections
 import json
 import os
@@ -34,7 +39,7 @@ import tempfile
 import time
 import uuid
 import xml.etree.ElementTree as ET
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from pathlib import Path
 
 DEFAULT_SCOPE = ("tests/gateway", "tests/agent")
@@ -42,6 +47,16 @@ FILE_TIMEOUT = 600
 # Fork-only failures above this are not re-run one by one: that many is a real break, not noise.
 ISOLATION_CAP = 300
 RUFF_SELECT = "F821,F823"
+# Directories the import check does not walk (besides any dot directory).
+IMPORT_SKIP_DIRS = {"venv", "node_modules", "website", "build", "dist"}
+# (module, name) pairs the import check cannot see but that resolve at runtime. Each needs a reason.
+IMPORT_ALLOWLIST = {
+    # agent/web_search_registry.py binds its public functions with `_registry.export(globals())`,
+    # so the name exists only at import time. tests/tools/test_web_search_depth.py (carry
+    # feat/web-search-depth) imports it and passes.
+    ("agent.web_search_registry", "register_provider"):
+        "bound at runtime by _registry.export(globals())",
+}
 
 
 def git(tree: Path, *args: str) -> str:
@@ -131,6 +146,96 @@ def ruff_findings(ruff: list[str], tree: Path) -> collections.Counter:
     return found
 
 
+def _module_path(root: Path, mod: str) -> Path | None:
+    base = root.joinpath(*mod.split("."))
+    if base.with_suffix(".py").is_file():
+        return base.with_suffix(".py")
+    if (base / "__init__.py").is_file():
+        return base / "__init__.py"
+    if base.is_dir():
+        return base  # namespace package
+    return None
+
+
+def _top_level_names(path: Path, cache: dict) -> set[str] | None:
+    """Names a module binds at top level (through if/try/with/for/while), or None if any name
+    could exist: a namespace package, a parse error, a star import or a module __getattr__."""
+    if path in cache:
+        return cache[path]
+    names: set[str] = set()
+    opaque = path.is_dir()
+    if not opaque:
+        try:
+            body = ast.parse(path.read_text(encoding="utf-8")).body
+        except (OSError, SyntaxError, ValueError):
+            opaque, body = True, []
+        stack = list(body)
+        while stack:
+            node = stack.pop()
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                names.add(node.name)
+                opaque = opaque or node.name == "__getattr__"
+            elif isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
+                targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+                names.update(x.id for t in targets for x in ast.walk(t) if isinstance(x, ast.Name))
+            elif isinstance(node, ast.Import):
+                names.update((a.asname or a.name).split(".")[0] for a in node.names)
+            elif isinstance(node, ast.ImportFrom):
+                opaque = opaque or any(a.name == "*" for a in node.names)
+                names.update(a.asname or a.name for a in node.names)
+            elif isinstance(node, (ast.If, ast.Try, ast.With, ast.For, ast.While)):
+                for field in ("body", "orelse", "finalbody"):
+                    stack.extend(getattr(node, field, None) or [])
+                for handler in getattr(node, "handlers", None) or []:
+                    stack.extend(handler.body)
+            elif type(node).__name__ == "TypeAlias":
+                names.add(node.name.id)
+    cache[path] = None if opaque else names
+    return cache[path]
+
+
+def unresolved_imports(tree: str) -> collections.Counter:
+    """Every `from <local module> import <name>` in the tree that names a missing module or a name
+    the module does not bind, keyed by (file, module, name) so a line shift is not a new item."""
+    root = Path(tree)
+    local = {p.stem if p.suffix == ".py" else p.name for p in root.iterdir()
+             if not p.name.startswith(".") and (p.suffix == ".py" or p.is_dir())}
+    cache: dict = {}
+    found: collections.Counter = collections.Counter()
+    for dirpath, dirs, files in os.walk(root):
+        dirs[:] = [d for d in dirs if d not in IMPORT_SKIP_DIRS and not d.startswith(".")]
+        for fname in files:
+            if not fname.endswith(".py"):
+                continue
+            path = Path(dirpath) / fname
+            rel = str(path.relative_to(root))
+            try:
+                parsed = ast.parse(path.read_text(encoding="utf-8"))
+            except (OSError, SyntaxError, ValueError):
+                continue  # not an import problem; a broken file fails its tests
+            package = Path(rel).parent.parts
+            for node in ast.walk(parsed):
+                if not isinstance(node, ast.ImportFrom):
+                    continue
+                mod = node.module or ""
+                if node.level:
+                    parts = list(package[: len(package) - (node.level - 1)])
+                    mod = ".".join([*parts, mod] if mod else parts)
+                if not mod or mod.split(".")[0] not in local:
+                    continue
+                target = _module_path(root, mod)
+                if target is None:
+                    found[(rel, mod, "<module>")] += 1
+                    continue
+                names = _top_level_names(target, cache)
+                if names is None:
+                    continue
+                for alias in node.names:
+                    if alias.name not in names and _module_path(root, f"{mod}.{alias.name}") is None:
+                        found[(rel, mod, alias.name)] += 1
+    return found
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--candidate", required=True, type=Path, help="integration build checkout")
@@ -183,12 +288,20 @@ def main() -> int:
     ruff_cand, ruff_base = ruff_findings(ruff, candidate), ruff_findings(ruff, base)
     ruff_new = sorted((ruff_cand - ruff_base).elements())
 
+    with ProcessPoolExecutor(max_workers=2) as pool:
+        imports_cand, imports_base = pool.map(unresolved_imports, [str(candidate), str(base)])
+    imports_new = sorted((imports_cand - imports_base).elements())
+    imports_allowed = [i for i in imports_new if (i[1], i[2]) in IMPORT_ALLOWLIST]
+    imports_new = [i for i in imports_new if (i[1], i[2]) not in IMPORT_ALLOWLIST]
+
     elapsed = time.monotonic() - started
     result = {
         "candidate": candidate_sha, "base": base_sha, "scope": scope, "carried_test_files": carried,
         "files": len(files), "candidate_failures": len(cand_failed), "upstream_too": len(cand_failed) - len(fork_only),
         "fork_only": broken, "order_dependent": noise, "ruff_fork_only": [list(r) for r in ruff_new],
-        "seconds": round(elapsed), "passed": not broken and not ruff_new,
+        "imports_fork_only": [list(i) for i in imports_new],
+        "imports_allowlisted": [list(i) for i in imports_allowed],
+        "seconds": round(elapsed), "passed": not broken and not ruff_new and not imports_new,
     }
     lines = [
         f"## Carry test gate: {'passed' if result['passed'] else 'FAILED'}",
@@ -197,16 +310,22 @@ def main() -> int:
         f"- fork-only, failing alone too: {len(broken)}",
         f"- fork-only in the batch, passing alone (order-dependent, not fatal): {len(noise)}",
         f"- fork-only undefined names (ruff {RUFF_SELECT}): {len(ruff_new)}",
+        f"- fork-only unresolved local imports: {len(imports_new)} (allowlisted: {len(imports_allowed)})",
     ]
     lines += [f"  - FAIL `{n}`" for n in broken]
     lines += [f"  - noise `{n}`" for n in noise]
     lines += [f"  - RUFF `{f}` {code} {msg}" for f, code, msg in ruff_new]
+    lines += [f"  - IMPORT `{f}` from {mod} import {name}" for f, mod, name in imports_new]
+    lines += [f"  - allowed `{f}` from {mod} import {name}: {IMPORT_ALLOWLIST[(mod, name)]}"
+              for f, mod, name in imports_allowed]
     text = "\n".join(lines)
     print(text)
     for node in broken:
         print(f"::error title=carry-test-gate::fork-only test failure {node}")
     for f, code, msg in ruff_new:
         print(f"::error file={f},title=carry-test-gate::fork-only {code} {msg}")
+    for f, mod, name in imports_new:
+        print(f"::error file={f},title=carry-test-gate::fork-only unresolved import from {mod} import {name}")
     if os.environ.get("GITHUB_STEP_SUMMARY"):
         with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as fh:
             fh.write(text + "\n")

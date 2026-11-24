@@ -92,7 +92,8 @@ whose commits fail tests after rebase). Run the same focused tests locally.
 ### E. Carry test gate failure (`carry-test-gate`)
 
 The run summary lists each fork-only failing test (`FAIL`) and each fork-only
-undefined name (`RUFF`). Upstream passes those tests at the same base, so a
+undefined name (`RUFF`) and each fork-only local import that does not resolve
+(`IMPORT`). Upstream passes those tests at the same base, so a
 carry broke them, usually through a rebase that took one side of a conflict.
 
 1. Find the carry: `git log upstream/main..origin/main -- <file>` on the files

@@ -121,8 +121,8 @@ name: Sync upstream
 # The carry test gate (.github/scripts/carry_test_gate.py) runs upstream's
 # tests/gateway and tests/agent plus every carried test file on the rebuilt
 # `main`, and plain upstream's verdict on each failing file, before anything is
-# pushed. A fork-only failure, or an undefined name (ruff F821/F823) upstream
-# does not have, stops the sync. A clean text merge is not proof: on 12-15 Nov
+# pushed. A fork-only failure, an undefined name (ruff F821/F823) or a local
+# import that does not resolve, where upstream has neither, stops the sync. A clean text merge is not proof: on 12-15 Nov
 # rebases that applied cleanly broke the reconnect watcher and a follow-up path.
 # After the push it records a `carry-test-gate` commit status on `main`;
 # sealed-release.yml refuses a commit without it.
@@ -420,7 +420,8 @@ jobs:
       # Fork-vs-upstream gate. Runs upstream's tests/gateway and tests/agent and
       # every carried test file on the rebuilt `main`, then plain upstream at the
       # same base on each failing file; only a fork-only failure (one that also
-      # fails when re-run alone) or a fork-only ruff F821/F823 finding fails it.
+      # fails when re-run alone), a fork-only ruff F821/F823 finding or a fork-only
+      # unresolved local import fails it.
       # Branches pushed by hand or by the Cursor recovery automation reach `main`
       # only through this step. See the job's timeout comment for its runtime.
       - name: Check out upstream base for the carry test gate

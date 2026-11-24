@@ -42,6 +42,7 @@ A carry that rebases or cherry-picks cleanly can still break Hermes: on 12-15 No
 2. Each file with a failure runs again on plain `upstream/main` at the same base, with the same environment. A failure that also happens there is upstream's.
 3. Each remaining failure runs again on its own. One that passes alone is order-dependent noise (batched Telegram tests fail that way even on upstream): it is listed in the run summary and does not fail the sync.
 4. `ruff check --select F821,F823` runs on both trees. A finding the rebuilt tree has and upstream does not (compared by file, code and message, so a moved line is not new) fails the sync.
+5. Every `from <local module> import <name>` in both trees, lazy imports inside functions included, is resolved statically against the tree's own files. An import the rebuilt tree cannot resolve and upstream can (compared by file, module and name) fails the sync. This is the reconnect watcher's class: a lazy import no test reaches. A name bound only at runtime goes in the script's `IMPORT_ALLOWLIST` with a reason.
 
 A failure stops the run before anything is pushed, and the sync-failure issue names `failed_step: carry-test-gate`. Branches pushed by hand or by the Cursor recovery automation reach `main` only through this gate. The gate's verdict is recorded as a `carry-test-gate` commit status on the pushed `main`, and [sealed releases](#sealed-releases) refuse a commit without it. A `skip_tests` dispatch runs no gate and records nothing, so its `main` cannot be released.
 
