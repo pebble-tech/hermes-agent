@@ -20,12 +20,12 @@ You are recovering a failed pebble-tech/hermes-agent upstream sync.
 2. Read FORK.md and follow .cursor/skills/recover-fork-sync/SKILL.md exactly.
 3. Fix the failing SOURCE branch (ops-overlay or a FEATURE_BRANCHES entry). Never commit recovery fixes to integration main.
 4. If upstream absorbed the patch (closed/superseded PR), drop the branch from FEATURE_BRANCHES via an ops-overlay change (push or PR to ops-overlay only).
-5. Default delivery: after focused tests pass, `git push --force-with-lease origin <source-branch>`. Do NOT open a pull request when the source branch was updated successfully.
+5. Default delivery: after focused tests and the carry test gate pass, `git push --force-with-lease origin <source-branch>`. Do NOT open a pull request when the source branch was updated successfully.
 6. Open a PR only if force-push is blocked or human review is required before updating the source branch. If you open a PR, base it on the SOURCE branch (ops-overlay or feature/*), never integration main. Do not leave orphan cursor/* branches that duplicate an already-updated source tip.
 7. After the source branch is updated, run: gh workflow run sync-upstream.yml --repo pebble-tech/hermes-agent --ref main
 8. Wait for sync success, comment on the sync-failure issue, close it.
 
-Use gh and git. Run focused tests from the skill before pushing.
+Use gh and git. Run focused tests and the carry test gate from the skill before pushing. Never change the gate to get a sync through.
 ```
 
 6. Save the automation → copy **Webhook URL** and **API key**
