@@ -143,6 +143,8 @@ on:
 permissions:
   contents: write
   issues: write
+  # Record the carry test gate on the pushed `main` commit (sealed-release.yml reads it).
+  statuses: write
   # Disable non-allowlisted workflows (step after the push).
   actions: write
 
@@ -196,7 +198,10 @@ env:
 jobs:
   sync:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # The carry test gate is most of the run: about 15,400 CPU-seconds of tests
+    # (43 min at 8 jobs locally), so roughly 65-100 min on a 4-vCPU runner.
+    # GitHub's hosted-runner job limit is 360 min.
+    timeout-minutes: 180
     steps:
       - name: Checkout fork (full history)
         uses: actions/checkout@v4
@@ -412,6 +417,38 @@ jobs:
             exit 1
           fi
 
+      # Fork-vs-upstream gate. Runs upstream's tests/gateway and tests/agent and
+      # every carried test file on the rebuilt `main`, then plain upstream at the
+      # same base on each failing file; only a fork-only failure (one that also
+      # fails when re-run alone) or a fork-only ruff F821/F823 finding fails it.
+      # Branches pushed by hand or by the Cursor recovery automation reach `main`
+      # only through this step. See the job's timeout comment for its runtime.
+      - name: Check out upstream base for the carry test gate
+        if: inputs.skip_tests != 'true'
+        run: |
+          git worktree add --detach "$RUNNER_TEMP/upstream-base" "$upstream_sha"
+          # From the rebased ops-overlay, not the candidate tree: a carry cannot
+          # change the gate that judges it.
+          git show "$OPS_OVERLAY_BRANCH:.github/scripts/carry_test_gate.py" > "$SYNC_SCRIPTS/carry_test_gate.py"
+
+      - name: Carry test gate (fork-only failures)
+        id: carry_gate
+        if: inputs.skip_tests != 'true'
+        env:
+          OPENROUTER_API_KEY: ""
+          OPENAI_API_KEY: ""
+          NOUS_API_KEY: ""
+        run: |
+          source .venv/bin/activate
+          if ! python "$SYNC_SCRIPTS/carry_test_gate.py" \
+            --candidate "$GITHUB_WORKSPACE" \
+            --base "$RUNNER_TEMP/upstream-base" \
+            --jobs "$(nproc)" \
+            --report "$RUNNER_TEMP/carry-test-gate.json"; then
+            bash "$SYNC_SCRIPTS/record-sync-failure.sh" carry-test-gate "$INTEGRATION_BRANCH"
+            exit 1
+          fi
+
       - name: Smoke-test gateway-policy plugin against integration branch
         if: inputs.skip_tests != 'true'
         run: |
@@ -451,6 +488,23 @@ jobs:
             bash "$SYNC_SCRIPTS/record-sync-failure.sh" push "$INTEGRATION_BRANCH"
             exit 1
           fi
+
+      # The passing record sealed-release.yml requires. Only a run whose gate
+      # passed writes it, so a skip_tests run pushes a `main` that cannot ship.
+      - name: Record carry test gate on main
+        if: steps.carry_gate.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          sha="$(git rev-parse "$INTEGRATION_BRANCH")"
+          if ! gh api -X POST "repos/${{ github.repository }}/statuses/$sha" \
+            -f state=success -f context=carry-test-gate \
+            -f description="no fork-only failures vs upstream ${upstream_sha:0:12}" \
+            -f target_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" >/dev/null; then
+            bash "$SYNC_SCRIPTS/record-sync-failure.sh" record-gate "$INTEGRATION_BRANCH"
+            exit 1
+          fi
+          echo "carry-test-gate: success recorded on $sha"
 
       # `main` is stripped of upstream workflows, but `ops-overlay`, the carried
       # branches and fork PRs keep them; this keeps them from running. A new
@@ -542,8 +596,9 @@ jobs:
               `1. Rebase conflict on a feature branch — upstream refactored the code the patch touches.`,
               `2. Cherry-pick conflict when rebuilding \`main\` — two feature branches touch the same lines.`,
               `3. Focused tests failed — upstream changed a signature the tests depend on.`,
-              `4. Plugin smoke-test failed — \`pebble-tech/hermes-plugin-gateway-policy\` no longer loads cleanly.`,
-              `5. Rebase conflict on \`ops-overlay\` — rare; only touches \`.github/workflows/sync-upstream.yml\` and \`FORK.md\`.`,
+              `4. Carry test gate failed — a carry breaks a test upstream passes, or adds an undefined name. The run summary lists each one.`,
+              `5. Plugin smoke-test failed — \`pebble-tech/hermes-plugin-gateway-policy\` no longer loads cleanly.`,
+              `6. Rebase conflict on \`ops-overlay\` — rare; only touches \`.github/workflows/sync-upstream.yml\` and \`FORK.md\`.`,
               ``,
               `If upstream absorbed the patch (closed/superseded PR), drop the branch from \`FEATURE_BRANCHES\` via \`ops-overlay\` — do not rebase the dead branch.`,
               ``,

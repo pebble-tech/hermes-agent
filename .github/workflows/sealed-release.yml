@@ -53,6 +53,7 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: write
+      statuses: read
     outputs:
       sha: ${{ steps.resolve.outputs.sha }}
       tag: ${{ steps.resolve.outputs.tag }}
@@ -90,6 +91,19 @@ jobs:
             echo "::error::commit $sha is not in $GITHUB_REPOSITORY"
             exit 1
           fi
+          # Only a commit that passed the carry test gate ships: the sync records a
+          # `carry-test-gate` success status on the `main` it pushes, and only when
+          # its gate passed (sync-upstream.yml). Statuses list newest first; the newest
+          # for the context wins.
+          gate="$(gh api "repos/$GITHUB_REPOSITORY/commits/$sha/statuses?per_page=100" \
+            --jq '[.[] | select(.context == "carry-test-gate")][0] // empty | [.state, .creator.login, .target_url] | @tsv')"
+          IFS=$'\t' read -r gate_state gate_creator gate_url <<<"$gate"
+          if [ "$gate_state" != success ] || [ "$gate_creator" != "github-actions[bot]" ] \
+            || ! [[ "$gate_url" =~ ^https://github\.com/$GITHUB_REPOSITORY/actions/runs/[0-9]+$ ]]; then
+            echo "::error::$sha has not passed the carry test gate (status: '${gate_state:-none}' by '${gate_creator:-nobody}'). Release a fork main commit from a sync run whose gate passed."
+            exit 1
+          fi
+          echo "gate: carry-test-gate passed for $sha ($gate_url)"
           # GITHUB_TOKEN cannot create a ref on a commit whose workflow files
           # differ from the default branch (no `workflows` permission), which is
           # true of most older pins. The operator then pushes the tag and this

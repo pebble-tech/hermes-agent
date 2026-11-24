@@ -46,7 +46,7 @@ Parse the `sync-failure` YAML block or webhook JSON:
 | Field | Meaning |
 |-------|---------|
 | `upstream_sha` | NousResearch `main` at failure time |
-| `failed_step` | `rebase-ops-overlay`, `rebase-feature-branch`, `cherry-pick-main`, `focused-tests`, `plugin-smoke-test`, `push` |
+| `failed_step` | `rebase-ops-overlay`, `rebase-feature-branch`, `cherry-pick-main`, `focused-tests`, `carry-test-gate`, `plugin-smoke-test`, `push`, `record-gate` |
 | `failed_branch` | Source branch to fix (`ops-overlay` or a `FEATURE_BRANCHES` entry) |
 | `conflict_files` | Paths from rebase/cherry-pick |
 | `workflow_run_url` | Actions log |
@@ -89,6 +89,25 @@ Two feature branches touch the same lines. Fix the **later** branch in
 Fix on the branch that introduced the regression (usually the feature branch
 whose commits fail tests after rebase). Run the same focused tests locally.
 
+### E. Carry test gate failure (`carry-test-gate`)
+
+The run summary lists each fork-only failing test (`FAIL`) and each fork-only
+undefined name (`RUFF`). Upstream passes those tests at the same base, so a
+carry broke them, usually through a rebase that took one side of a conflict.
+
+1. Find the carry: `git log upstream/main..origin/main -- <file>` on the files
+   in the traceback, then that carry's own rebase commits.
+2. Fix it on that carry branch (as in B) so upstream's test passes. Do not edit
+   or delete upstream's test to make it pass. The one exception is a test that
+   pins behaviour the carry changes on purpose (its commit message says what it
+   changes); then update only that expectation, on the carry, and say so in the
+   commit message.
+3. Rebuild `main` locally the way the sync does and run the gate on it (below).
+4. Push the carry branch, then trigger sync.
+
+`record-gate`: the push succeeded but writing the `carry-test-gate` status
+failed. Re-run the sync; nothing is wrong with the branches.
+
 ## Focused tests (match CI)
 
 ```bash
@@ -103,6 +122,20 @@ python -m pytest \
   tests/hermes_cli/test_plugins.py \
   -q --tb=short
 ```
+
+## Carry test gate (match CI)
+
+On a local rebuild of `main` (ops-overlay and every `FEATURE_BRANCHES` entry
+rebased onto `upstream/main`, then cherry-picked in order, as
+`sync-upstream.yml` does):
+
+```bash
+git worktree add --detach ../upstream-base upstream/main
+python .github/scripts/carry_test_gate.py --candidate . --base ../upstream-base
+```
+
+It must print `Carry test gate: passed`. It takes most of a CI run's time, so
+run it once, after the focused tests pass.
 
 ## After fix — trigger sync
 
@@ -148,5 +181,11 @@ git rev-list --count origin/main..upstream/main   # should be 0 after successful
 - Do **not** commit recovery fixes to integration `main`
 - Do **not** leave `main` tracking `upstream/main`
 - Do **not** add obsolete branches back to `FEATURE_BRANCHES`
+- Do **not** change the carry test gate (`carry_test_gate.py`, its scope or its
+  steps in `sync-upstream.yml`) or the release's `carry-test-gate` check to get
+  a sync through. A gate change is a reviewed `ops-overlay` PR, never a recovery.
+- When resolving a conflict on a carry, do not take upstream's side of a hunk
+  the carry needs without checking every caller of what the carry moved or
+  renamed (lazy imports inside functions, `mock.patch` targets, docs)
 - Do **not** open a recovery PR against `main` when the source branch is already updated
 - Minimize scope — fork ops only, no unrelated Hermes core changes
