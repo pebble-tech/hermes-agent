@@ -342,8 +342,16 @@ def mark_undelivered_interim(agent: Any, *, assistant_message: Any, assistant_ms
     the sidecar is persisted with the row and replayed verbatim, so this row's wire bytes
     are identical on every later call. It is decided before the row is flushed (interim
     emission runs after the flush), from the same callback and streamed-text checks the
-    interim path uses."""
+    interim path uses.
+
+    Prose beside a ``clarify`` call still goes out with interim messages off, through
+    ``clarify_context_callback`` (#102413), so it gets no marker."""
     if getattr(agent, "interim_assistant_callback", None) is not None:
+        return False
+    if getattr(agent, "clarify_context_callback", None) is not None and any(
+        isinstance(tc, dict) and (tc.get("function") or {}).get("name") == "clarify"
+        for tc in assistant_msg.get("tool_calls") or ()
+    ):
         return False
     content = assistant_msg.get("content")
     if not isinstance(content, str) or not content or "api_content" in assistant_msg:

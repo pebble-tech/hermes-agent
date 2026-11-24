@@ -373,6 +373,41 @@ class TestUndeliveredInterimMarker:
         assert sent["content"] == f"{text}\n\n{UNDELIVERED_INTERIM_MARKER}"
 
 
+    def test_clarify_prose_sent_through_clarify_context_gets_no_marker(self, agent):
+        """With interim messages off, prose beside a ``clarify`` call still reaches the chat through
+        ``clarify_context_callback`` (upstream #102413), so the row must not claim it was not shown."""
+        from agent.turn_tool_round import UNDELIVERED_INTERIM_MARKER
+
+        agent.platform = "gateway"
+        agent.interim_assistant_callback = None
+        agent.valid_tool_names.add("clarify")
+        sent = []
+        agent.clarify_context_callback = lambda text, already_streamed=False: sent.append(text)
+        draft = "Draft: Hello Bob, lunch at noon on Friday at Greenview?"
+        agent.client.chat.completions.create.side_effect = [
+            _mock_response(
+                content=draft,
+                finish_reason="tool_calls",
+                tool_calls=[_mock_tool_call(name="clarify", arguments='{"question":"Send it?"}', call_id="c1")],
+            ),
+            _mock_response(content="Sent.", finish_reason="stop"),
+        ]
+
+        with (
+            patch("model_tools.handle_function_call", return_value='{"answer":"yes"}'),
+            patch.object(agent, "_persist_session"),
+            patch.object(agent, "_save_trajectory"),
+            patch.object(agent, "_cleanup_task_resources"),
+        ):
+            result = agent.run_conversation("draft a lunch invite to Bob")
+
+        assert sent == [draft]
+        (stored,) = self._tool_call_rows(result["messages"])
+        assert "api_content" not in stored
+        second_request = agent.client.chat.completions.create.call_args_list[1].kwargs["messages"]
+        assert UNDELIVERED_INTERIM_MARKER not in json.dumps(second_request)
+
+
 def test_codex_tool_call_repeating_incomplete_text_is_still_marked(monkeypatch):
     """incomplete(text) -> tool call(same text) -> final, with no interim or stream
     delivery: the tool-call row is deduplicated for emission only, and its undelivered
