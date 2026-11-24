@@ -169,7 +169,7 @@ gateway under the backend, and do NOT "fix" update locks by widening the tree-ki
   fallback-after-miss leak); import the shared one. `tests/gateway/test_shared_platform_boilerplate.py`
   asserts every plugin's `_env_enablement` reads only through it.
 - **Scope is bound per profile activity, not per turn.** `run.py::_profile_runtime_scope(home)`
-  (one `Scope`: `agent/runtime_scope.py`, HX016) wraps a routed turn (`run_turn.py::_profile_scope_for_source`); the same binding wraps every path
+  (one `Scope`: `agent/runtime_scope.py`, HX016) wraps a routed turn (`run_turn_profile_scope.py::_profile_scope_for_source`); the same binding wraps every path
   that touches a session's home, secrets or terminal scope with no turn on the stack: release and
   eviction (`run_agent_cache.py::_run_release_in_profile_scope` — TTL, LRU and memory-pressure
   eviction all route through it so `on_session_end`/memory flush hit the OWNING profile's provider),
