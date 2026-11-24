@@ -407,6 +407,37 @@ class TestUndeliveredInterimMarker:
         second_request = agent.client.chat.completions.create.call_args_list[1].kwargs["messages"]
         assert UNDELIVERED_INTERIM_MARKER not in json.dumps(second_request)
 
+    def test_end_turn_handoff_sent_as_final_response_gets_no_marker(self, agent):
+        """An end_turn tool batch returns its prose as ``final_response``, which the gateway sends as
+        the reply, so the row must not claim it was not shown. Needs the end_turn carry
+        (feature/end-turn-tool-contract-upstream); the integration build has both."""
+        from agent.turn_tool_round import UNDELIVERED_INTERIM_MARKER
+        from tools.registry import registry
+
+        if not hasattr(registry, "is_end_turn"):
+            pytest.skip("end_turn tools come from the end_turn carry")
+        agent.platform = "gateway"
+        agent.interim_assistant_callback = None
+        handoff = "I've passed this to our team; Thiru will call you at 3pm today."
+        agent.client.chat.completions.create.return_value = _mock_response(
+            content=handoff,
+            finish_reason="tool_calls",
+            tool_calls=[_mock_tool_call(name="web_search", arguments="{}", call_id="c1")],
+        )
+
+        with (
+            patch("model_tools.handle_function_call", return_value='{"ok": true}'),
+            patch.object(registry, "is_end_turn", return_value=True),
+            patch.object(agent, "_persist_session"),
+            patch.object(agent, "_save_trajectory"),
+            patch.object(agent, "_cleanup_task_resources"),
+        ):
+            result = agent.run_conversation("I want to talk to a person")
+
+        assert result["final_response"] == handoff
+        (stored,) = self._tool_call_rows(result["messages"])
+        assert UNDELIVERED_INTERIM_MARKER not in (stored.get("api_content") or "")
+
 
 def test_codex_tool_call_repeating_incomplete_text_is_still_marked(monkeypatch):
     """incomplete(text) -> tool call(same text) -> final, with no interim or stream

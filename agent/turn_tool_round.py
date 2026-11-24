@@ -374,9 +374,14 @@ def mark_undelivered_interim(agent: Any, *, assistant_message: Any, assistant_ms
     emission runs after the flush), from the same callback and streamed-text checks the
     interim path uses.
 
-    Prose beside a ``clarify`` call still goes out with interim messages off, through
-    ``clarify_context_callback`` (#102413), so it gets no marker."""
+    Two other paths deliver the text with interim messages off, so they get no marker: prose
+    beside a ``clarify`` call goes out through ``clarify_context_callback`` (#102413), and an
+    end_turn tool batch returns its prose as the turn's ``final_response``. The end_turn flag
+    is set by ``stage_tool_call_message`` only when the end_turn carry is present; without it
+    the attribute is absent and the check is a no-op."""
     if getattr(agent, "interim_assistant_callback", None) is not None:
+        return False
+    if getattr(agent, "_last_tool_calls_all_end_turn", False) is True:
         return False
     if getattr(agent, "clarify_context_callback", None) is not None and any(
         isinstance(tc, dict) and (tc.get("function") or {}).get("name") == "clarify"
