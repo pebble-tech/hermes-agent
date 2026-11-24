@@ -334,31 +334,32 @@ class TestBusyPathPreGatewayDispatch:
         )
 
     @pytest.mark.asyncio
-    async def test_interrupt_uses_text_snapshot_before_pending_queue(self):
-        """Interrupt payload must be the inbound fragment, not post-merge text.
+    async def test_media_only_follow_up_interrupts_with_media_placeholder(self):
+        """A captionless photo interrupts with the media placeholder, not ``""``.
 
-        Pending queue helpers may alias / mutate the same MessageEvent; snapshot
-        ``event.text`` before queueing so interrupt does not see appended text.
+        The run's interrupt message is what tells the agent a new message arrived.
+        An empty string reads as a bare user stop.
         """
+        from gateway.run import _build_media_placeholder
+
         runner, _ = _make_runner()
         runner._busy_input_mode = "interrupt"
         adapter = _make_adapter()
-        event = _make_event(text="inbound fragment")
+        event = _make_event(text="")
+        event.message_type = MessageType.PHOTO
+        event.media_urls = ["/tmp/photo.jpg"]
+        event.media_types = ["image/jpeg"]
         sk = build_session_key(event.source)
         agent = _wire_running_agent(runner, sk, adapter)
         runner.adapters[event.source.platform] = adapter
 
-        def _queue_mutating(_session_key, queued_event, *_args, **_kwargs):
-            queued_event.text = f"{queued_event.text}\nmerged-followup"
-
-        with patch("hermes_cli.lifecycle.ainvoke_hook", new_callable=AsyncMock, return_value=[]), patch.object(
-            runner, "_queue_or_replace_pending_event", side_effect=_queue_mutating
-        ):
+        with patch("hermes_cli.lifecycle.ainvoke_hook", new_callable=AsyncMock, return_value=[]):
             result = await runner._handle_active_session_busy_message(event, sk)
 
         assert result is True
-        agent.interrupt.assert_called_once_with("inbound fragment")
-        assert event.text == "inbound fragment\nmerged-followup"
+        placeholder = _build_media_placeholder(event)
+        assert placeholder
+        agent.interrupt.assert_called_once_with(placeholder)
 
 
 def _real_manager_with(monkeypatch, callback):
