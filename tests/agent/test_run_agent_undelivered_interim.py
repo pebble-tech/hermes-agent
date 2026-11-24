@@ -373,39 +373,68 @@ class TestUndeliveredInterimMarker:
         assert sent["content"] == f"{text}\n\n{UNDELIVERED_INTERIM_MARKER}"
 
 
-    def test_clarify_prose_sent_through_clarify_context_gets_no_marker(self, agent):
-        """With interim messages off, prose beside a ``clarify`` call still reaches the chat through
-        ``clarify_context_callback`` (upstream #102413), so the row must not claim it was not shown."""
-        from agent.turn_tool_round import UNDELIVERED_INTERIM_MARKER
-
+    @staticmethod
+    def _run_clarify_turn(agent, draft, *, held):
+        """A turn whose first reply is ``draft`` beside a valid ``clarify`` call the user answers,
+        with interim messages off; returns what clarify context sent and the run result."""
         agent.platform = "gateway"
         agent.interim_assistant_callback = None
         agent.valid_tool_names.add("clarify")
         sent = []
         agent.clarify_context_callback = lambda text, already_streamed=False: sent.append(text)
-        draft = "Draft: Hello Bob, lunch at noon on Friday at Greenview?"
+        agent.clarify_callback = lambda questions: {"answers": {"q0": "Yes"}, "outcome": "answered"}
         agent.client.chat.completions.create.side_effect = [
             _mock_response(
                 content=draft,
                 finish_reason="tool_calls",
-                tool_calls=[_mock_tool_call(name="clarify", arguments='{"question":"Send it?"}', call_id="c1")],
+                tool_calls=[_mock_tool_call(
+                    name="clarify",
+                    arguments='{"questions":[{"question":"Send it?","choices":["Yes","No"]}]}',
+                    call_id="c1",
+                )],
             ),
             _mock_response(content="Sent.", finish_reason="stop"),
         ]
-
+        transforms = (lambda response_text, **kwargs: response_text,) if held else ()
         with (
-            patch("model_tools.handle_function_call", return_value='{"answer":"yes"}'),
+            patch("agent.conversation_loop.held_stream_transforms", return_value=transforms),
             patch.object(agent, "_persist_session"),
             patch.object(agent, "_save_trajectory"),
             patch.object(agent, "_cleanup_task_resources"),
         ):
             result = agent.run_conversation("draft a lunch invite to Bob")
+        assert agent._hold_stream is held
+        (tool_row,) = [m for m in result["messages"] if m.get("role") == "tool"]
+        assert json.loads(tool_row["content"])["outcome"] == "answered"
+        assert result["final_response"] == "Sent."
+        return sent, result
+
+    def test_clarify_prose_sent_through_clarify_context_gets_no_marker(self, agent):
+        """With interim messages off, prose beside a ``clarify`` call still reaches the chat through
+        ``clarify_context_callback`` (upstream #102413), so the row must not claim it was not shown."""
+        from agent.turn_tool_round import UNDELIVERED_INTERIM_MARKER
+
+        draft = "Draft: Hello Bob, lunch at noon on Friday at Greenview?"
+        sent, result = self._run_clarify_turn(agent, draft, held=False)
 
         assert sent == [draft]
         (stored,) = self._tool_call_rows(result["messages"])
         assert "api_content" not in stored
         second_request = agent.client.chat.completions.create.call_args_list[1].kwargs["messages"]
         assert UNDELIVERED_INTERIM_MARKER not in json.dumps(second_request)
+
+    def test_held_clarify_prose_keeps_the_marker(self, agent):
+        """A held turn (``hold_stream`` plugin) sends no clarify context, so the user never sees the
+        prose beside the ``clarify`` call and the next call must be told so."""
+        from agent.turn_tool_round import UNDELIVERED_INTERIM_MARKER
+
+        draft = "Draft: Lunch at noon on Friday at Greenview."
+        sent, _ = self._run_clarify_turn(agent, draft, held=True)
+
+        assert sent == []
+        second_request = agent.client.chat.completions.create.call_args_list[1].kwargs["messages"]
+        (row,) = self._tool_call_rows(second_request)
+        assert row["content"] == f"{draft}\n\n{UNDELIVERED_INTERIM_MARKER}"
 
     def test_end_turn_handoff_sent_as_final_response_gets_no_marker(self, agent):
         """An end_turn tool batch returns its prose as ``final_response``, which the gateway sends as
