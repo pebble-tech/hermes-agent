@@ -19,7 +19,7 @@ import time
 from agent.i18n import t
 from agent.session_activity import format_iteration_progress
 from agent.turn_failure_copy import FAILED_TURN_DISPLAY_KIND, FAILED_TURN_NOTICE, PARTIAL_FAILED_TURN_NOTICE
-from contextlib import suppress
+from contextlib import nullcontext, suppress
 from contextvars import copy_context
 from gateway.bot_peer_notices import automatic_notices_allowed
 from gateway.config import Platform
