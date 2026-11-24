@@ -198,10 +198,11 @@ env:
 jobs:
   sync:
     runs-on: ubuntu-latest
-    # The carry test gate is most of the run: about 15,400 CPU-seconds of tests
-    # (43 min at 8 jobs locally), so roughly 65-100 min on a 4-vCPU runner.
-    # GitHub's hosted-runner job limit is 360 min.
-    timeout-minutes: 180
+    # The carry test gate is most of the run. On Linux (Python 3.14, 3,412 files)
+    # it took 99 min at 6 jobs: about 33,600 worker-seconds of tests, so roughly
+    # 140 min of tests on a 4-vCPU runner, plus setup. 240 keeps headroom for a
+    # slow day; GitHub's hosted-runner job limit is 360 min.
+    timeout-minutes: 240
     steps:
       - name: Checkout fork (full history)
         uses: actions/checkout@v4
