@@ -53,6 +53,9 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: write
+      statuses: read
+      # Look up the sync run a carry-test-gate status points to.
+      actions: read
     outputs:
       sha: ${{ steps.resolve.outputs.sha }}
       tag: ${{ steps.resolve.outputs.tag }}
@@ -90,6 +93,48 @@ jobs:
             echo "::error::commit $sha is not in $GITHUB_REPOSITORY"
             exit 1
           fi
+          # Only a commit that passed the carry test gate ships. The sync records a
+          # `carry-test-gate` success status on the `main` it pushes, pointing to its run.
+          # Statuses list newest first; the newest for the context wins.
+          gate="$(gh api "repos/$GITHUB_REPOSITORY/commits/$sha/statuses?per_page=100" \
+            --jq '[.[] | select(.context == "carry-test-gate")][0] // empty | [.state, .creator.login, .target_url] | @tsv')"
+          IFS=$'\t' read -r gate_state gate_creator gate_url <<<"$gate"
+          refuse() {
+            echo "::error::$sha has not passed the carry test gate: $1. Release a fork main commit from a sync run whose gate passed."
+            exit 1
+          }
+          if [ "$gate_state" != success ] || [ "$gate_creator" != "github-actions[bot]" ] \
+            || ! [[ "$gate_url" =~ ^https://github\.com/$GITHUB_REPOSITORY/actions/runs/([0-9]+)$ ]]; then
+            refuse "status '${gate_state:-none}' by '${gate_creator:-nobody}'"
+          fi
+          run_id="${BASH_REMATCH[1]}"
+          # The status is only a pointer: any run with `statuses: write` can post one with
+          # any target_url. The proof is the run: a finished, successful sync-upstream.yml
+          # run from main or ops-overlay whose gate step passed and that uploaded the
+          # `carry-test-gate-<sha>` artifact. That workflow uploads it only after its gate
+          # passed, named for the main it pushed, and an artifact belongs to the run that
+          # uploaded it, so no other run can supply one.
+          run="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id" \
+            --jq '[.path, .head_branch, .event, .status, .conclusion] | @tsv')" \
+            || refuse "run $run_id cannot be read"
+          IFS=$'\t' read -r run_path run_branch run_event run_status run_conclusion <<<"$run"
+          if [ "$run_path" != .github/workflows/sync-upstream.yml ] \
+            || ! [[ "$run_branch" =~ ^(main|ops-overlay)$ ]] \
+            || ! [[ "$run_event" =~ ^(schedule|workflow_dispatch)$ ]] \
+            || [ "$run_status" != completed ] || [ "$run_conclusion" != success ]; then
+            refuse "run $run_id is '${run_path:-?}' on '${run_branch:-?}' ($run_event, $run_status, ${run_conclusion:-no conclusion}), not a successful sync-upstream.yml run from main or ops-overlay"
+          fi
+          gate_step="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/jobs?per_page=100" \
+            --jq '[.jobs[].steps[]? | select(.name == "Carry test gate (fork-only failures)") | .conclusion] | first // empty')"
+          if [ "$gate_step" != success ]; then
+            refuse "the gate step of run $run_id is '${gate_step:-absent}'"
+          fi
+          evidence="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/artifacts?per_page=100" \
+            --jq "[.artifacts[] | select(.name == \"carry-test-gate-$sha\")] | length")"
+          if ! [[ "$evidence" =~ ^[1-9][0-9]*$ ]]; then
+            refuse "run $run_id has no carry-test-gate-$sha artifact, so its gate did not test this commit"
+          fi
+          echo "gate: carry-test-gate passed for $sha in sync run $run_id ($gate_url)"
           # GITHUB_TOKEN cannot create a ref on a commit whose workflow files
           # differ from the default branch (no `workflows` permission), which is
           # true of most older pins. The operator then pushes the tag and this
