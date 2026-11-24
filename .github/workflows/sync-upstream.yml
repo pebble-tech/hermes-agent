@@ -136,7 +136,7 @@ on:
   workflow_dispatch:
     inputs:
       skip_tests:
-        description: "Skip pytest (fast path for testing the workflow itself)"
+        description: "Skip the focused and plugin tests (the carry test gate always runs)"
         required: false
         default: "false"
 
@@ -376,15 +376,12 @@ jobs:
           echo "::endgroup::"
 
       - name: Install uv
-        if: inputs.skip_tests != 'true'
         uses: astral-sh/setup-uv@v5
 
       - name: Install ripgrep
-        if: inputs.skip_tests != 'true'
         run: sudo apt-get install -y ripgrep
 
       - name: Install hermes-agent (from integration branch)
-        if: inputs.skip_tests != 'true'
         run: |
           # Upstream moved dev deps to [dependency-groups]; `.[all,dev]` no longer
           # installs pytest. Match upstream CI: locked sync on Python 3.14.
@@ -421,12 +418,12 @@ jobs:
       # Fork-vs-upstream gate. Runs upstream's tests/gateway and tests/agent and
       # every carried test file on the rebuilt `main`, then plain upstream at the
       # same base on each failing file; only a fork-only failure (one that also
-      # fails when re-run alone), a fork-only ruff F821/F823 finding or a fork-only
-      # unresolved local import fails it.
+      # fails when re-run alone), an upstream test file the rebuilt `main` lacks, a
+      # fork-only ruff F821/F823 finding or a fork-only unresolved local import fails it.
+      # It runs on every sync: skip_tests does not skip it.
       # Branches pushed by hand or by the Cursor recovery automation reach `main`
       # only through this step. See the job's timeout comment for its runtime.
       - name: Check out upstream base for the carry test gate
-        if: inputs.skip_tests != 'true'
         run: |
           git worktree add --detach "$RUNNER_TEMP/upstream-base" "$upstream_sha"
           # From the rebased ops-overlay, not the candidate tree: a carry cannot
@@ -435,7 +432,6 @@ jobs:
 
       - name: Carry test gate (fork-only failures)
         id: carry_gate
-        if: inputs.skip_tests != 'true'
         env:
           OPENROUTER_API_KEY: ""
           OPENAI_API_KEY: ""
@@ -464,6 +460,24 @@ jobs:
             exit 1
           fi
 
+      # Gate evidence sealed-release.yml requires, uploaded before the push: an
+      # artifact named for the `main` the gate tested. After the push, a status on that
+      # commit points to this run. Release trusts the status only after it finds this
+      # run's artifact, its gate step's success and the run's success; no other run can
+      # add an artifact to this one.
+      - name: Name carry test gate evidence
+        id: gate_evidence
+        if: steps.carry_gate.outcome == 'success'
+        run: echo "sha=$(git rev-parse "$INTEGRATION_BRANCH")" >> "$GITHUB_OUTPUT"
+
+      - name: Upload carry test gate evidence
+        if: steps.carry_gate.outcome == 'success'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: carry-test-gate-${{ steps.gate_evidence.outputs.sha }}
+          path: ${{ runner.temp }}/carry-test-gate.json
+          if-no-files-found: error
+
       - name: Configure push credentials
         env:
           SYNC_PUSH_TOKEN: ${{ secrets.SYNC_PUSH_TOKEN }}
@@ -479,8 +493,10 @@ jobs:
           git config --local credential.helper ""
           git remote set-url origin "https://x-access-token:${SYNC_PUSH_TOKEN}@github.com/${{ github.repository }}.git"
 
-      # FEATURE_BRANCHES are not pushed: see the header comment.
+      # FEATURE_BRANCHES are not pushed: see the header comment. Nothing is pushed
+      # unless the carry test gate passed, whatever skip_tests says.
       - name: Push rebased ops-overlay and integration branch
+        if: steps.carry_gate.outcome == 'success'
         run: |
           if ! git push --force-with-lease origin "$OPS_OVERLAY_BRANCH"; then
             bash "$SYNC_SCRIPTS/record-sync-failure.sh" push "$OPS_OVERLAY_BRANCH"
@@ -491,14 +507,13 @@ jobs:
             exit 1
           fi
 
-      # The passing record sealed-release.yml requires. Only a run whose gate
-      # passed writes it, so a skip_tests run pushes a `main` that cannot ship.
+      # The pointer to this run's evidence (see "Name carry test gate evidence").
       - name: Record carry test gate on main
         if: steps.carry_gate.outcome == 'success'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          sha="$(git rev-parse "$INTEGRATION_BRANCH")"
+          sha="${{ steps.gate_evidence.outputs.sha }}"
           if ! gh api -X POST "repos/${{ github.repository }}/statuses/$sha" \
             -f state=success -f context=carry-test-gate \
             -f description="no fork-only failures vs upstream ${upstream_sha:0:12}" \

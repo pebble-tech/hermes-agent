@@ -30,7 +30,7 @@ A scheduled GitHub Actions workflow ([`.github/workflows/sync-upstream.yml`](.gi
    - `tests/hermes_cli/test_plugins.py`
 8. Runs the carry test gate ([`.github/scripts/carry_test_gate.py`](.github/scripts/carry_test_gate.py), taken from the rebased `ops-overlay`) on the rebuilt `main` against a checkout of the same `upstream/main`. See [The carry test gate](#the-carry-test-gate).
 9. Clones `pebble-tech/hermes-plugin-gateway-policy` and runs its test suite (smoke-test catches plugin-side drift).
-10. On success → `push --force-with-lease` `ops-overlay` and `main`, then records a `carry-test-gate` success commit status on the pushed `main`. Carried feature branches are not pushed.
+10. On success → uploads the gate report as artifact `carry-test-gate-<main sha>`, `push --force-with-lease` `ops-overlay` and `main`, then records a `carry-test-gate` success commit status on the pushed `main` that points to the run. The push requires the gate's success. Carried feature branches are not pushed.
 11. Disables, through the Actions API, every active workflow in the repo whose file name is not in `WORKFLOW_ALLOWLIST` (default: `sync-upstream.yml`, `test-cursor-webhook.yml`, `sealed-release.yml`). This covers `ops-overlay`, the carried branches and fork PRs, which keep upstream's files. It runs after the push, and also when the sync failed part-way, so a new upstream workflow is disabled on the next run either way. It never fails the sync: a workflow it cannot disable is logged as a `::warning::`. Workflows already disabled by hand are left alone. This fork is a deploy target — Nous CI/publish/autofix should not run here; the carry test gate in this workflow is the check.
 12. On **any** failure → opens (or comments on) a `sync-failure`-labelled issue with the run URL, upstream SHA, failed step/branch, and a machine-readable `sync-failure` YAML block. Optionally POSTs the same payload to a Cursor automation webhook (see [FORK_SYNC_AUTOMATION.md](FORK_SYNC_AUTOMATION.md)). Never force-pushes a broken state.
 
@@ -38,13 +38,13 @@ A scheduled GitHub Actions workflow ([`.github/workflows/sync-upstream.yml`](.gi
 
 A carry that rebases or cherry-picks cleanly can still break Hermes: on 12-15 Nov 2026, rebases that applied as text left `run_adapters.py` importing a name its carry had moved (the reconnect watcher died after any platform drop) and dropped an import a new upstream line used. The gate looks for what the carries broke, not for everything that fails:
 
-1. Every `test_*.py` under upstream's `tests/gateway` and `tests/agent`, plus every test file the rebuilt `main` adds or changes against `upstream/main`, runs in its own pytest process on the rebuilt tree.
+1. Every `test_*.py` under upstream's `tests/gateway` and `tests/agent`, plus every test file the rebuilt `main` adds or changes against `upstream/main`, runs in its own pytest process on the rebuilt tree. A test file under those directories on `upstream/main` that the rebuilt tree lacks fails the sync, so a rebase cannot drop an upstream test file unseen; a carry that deletes or renames one on purpose lists it in the script's `DELETED_TEST_ALLOWLIST` with a reason.
 2. Each file with a failure runs again on plain `upstream/main` at the same base, with the same environment. A failure that also happens there is upstream's.
 3. Each remaining failure runs again on its own. One that passes alone is order-dependent noise (batched Telegram tests fail that way even on upstream): it is listed in the run summary and does not fail the sync.
 4. `ruff check --select F821,F823` runs on both trees. A finding the rebuilt tree has and upstream does not (compared by file, code and message, so a moved line is not new) fails the sync.
 5. Every `from <local module> import <name>` in both trees, lazy imports inside functions included, is resolved statically against the tree's own files. An import the rebuilt tree cannot resolve and upstream can (compared by file, module and name) fails the sync. This is the reconnect watcher's class: a lazy import no test reaches. A name bound only at runtime goes in the script's `IMPORT_ALLOWLIST` with a reason.
 
-A failure stops the run before anything is pushed, and the sync-failure issue names `failed_step: carry-test-gate`. Branches pushed by hand or by the Cursor recovery automation reach `main` only through this gate. The gate's verdict is recorded as a `carry-test-gate` commit status on the pushed `main`, and [sealed releases](#sealed-releases) refuse a commit without it. A `skip_tests` dispatch runs no gate and records nothing, so its `main` cannot be released.
+A failure stops the run before anything is pushed, and the sync-failure issue names `failed_step: carry-test-gate`. Branches pushed by hand or by the Cursor recovery automation reach `main` only through this gate. The gate's verdict is recorded as a `carry-test-gate` commit status on the pushed `main`, and [sealed releases](#sealed-releases) refuse a commit without it. The gate cannot be skipped: a `skip_tests` dispatch skips only the focused tests (step 7) and the plugin smoke test (step 9).
 
 The four focused tests (step 7) still run; they fail on any failure, upstream's included, because they cover contracts our plugins depend on: the `pre_gateway_dispatch` hook firing, WhatsApp session keying, plugin manifests loading. Upstream workflows stay in the tree on `ops-overlay` (so rebases stay clean) and are removed from rebuilt `main` (step 5); the sync also disables them in the Actions settings (step 11) on every other branch, so they do not schedule or open autofix PRs on this fork. Enabling one by hand is undone on the next sync unless it is in `WORKFLOW_ALLOWLIST`.
 
@@ -104,7 +104,14 @@ Close the open `sync-failure` issue after the next sync succeeds.
 - Jobs: `resolve` (tag) → `build` (per target) → `verify` (per target) → `publish`. Each `verify` job takes its target's built asset on a clean runner of that architecture, checks the layout, then runs `bin/hermes --version`, the key imports and the bundled tools as a non-root user with the tree read-only, lazy installs disabled and no network.
 - Both or nothing: `publish` runs only when every `build` and `verify` job passed. If one fails, nothing is published and the tag is left without a release, so the next dispatch reuses it. After creating the release, `publish` downloads it back and withdraws it (tag kept) unless it serves exactly the verified files and checksums.
 
-The `resolve` job also refuses a commit with no `carry-test-gate` success status written by `github-actions[bot]` from a workflow run of this repo. Only a sync run whose gate passed writes one, on the `main` commit it pushed, so release a fork `main` commit from such a run. This applies to both prefixes.
+The `resolve` job also refuses a commit unless the gate passed for it. The status alone is not proof, since any workflow run with `statuses: write` can post one with any link, so `resolve` follows it to the run and requires all of:
+
+- the newest `carry-test-gate` status on the commit is `success`, by `github-actions[bot]`, and links to a run of this repo;
+- that run is `sync-upstream.yml` on `main` or `ops-overlay`, from a schedule or manual dispatch, completed with conclusion `success`;
+- its `Carry test gate (fork-only failures)` step concluded `success`;
+- it holds an artifact named `carry-test-gate-<sha>` for this exact commit. The sync uploads it only after its gate passed, named for the `main` it tested, and an artifact belongs to the run that uploaded it.
+
+So release a fork `main` commit pushed by such a run, while the run's artifacts are retained (90 days by default). This applies to both prefixes.
 
 Use the `deploy-test` prefix for trial runs; it is allowed from any branch. The `deploy` prefix is refused unless the run is a manual dispatch on `main`, so a production release is always built by reviewed code.
 

@@ -18,11 +18,14 @@ on plain upstream at the same base, or an undefined name (ruff F821/F823) the ca
      the class that broke the reconnect watcher: a lazy import no test reaches.
 
 Scope: every test_*.py under each --scope directory, plus every test file the candidate adds or
-changes against the base (the carries' own tests, wherever they live).
+changes against the base (the carries' own tests, wherever they live). A test file in scope on the
+base that the candidate lacks fails the gate too, unless DELETED_TEST_ALLOWLIST names it with a
+reason: a rebase that loses an upstream test file would otherwise drop its tests unseen.
 
 usage: carry_test_gate.py --candidate DIR --base DIR [--python PY] [--ruff CMD] [--jobs N] [--report FILE]
 
-Exit 0 when there is no fork-only failure, ruff finding or unresolved import, 1 otherwise, 2 on a
+Exit 0 when there is no fork-only failure, missing upstream test file, ruff finding or unresolved
+import, 1 otherwise, 2 on a
 usage or setup error. Stdlib only: it runs from a copy outside the trees it checks.
 """
 
@@ -57,6 +60,8 @@ IMPORT_ALLOWLIST = {
     ("agent.web_search_registry", "register_provider"):
         "bound at runtime by _registry.export(globals())",
 }
+# Upstream test files (in scope on the base) a carry deletes or renames on purpose: path -> reason.
+DELETED_TEST_ALLOWLIST: dict[str, str] = {}
 
 
 def git(tree: Path, *args: str) -> str:
@@ -258,6 +263,9 @@ def main() -> int:
         return 2
     carried = carry_test_files(candidate, base_sha)
     files = discover(candidate, scope, carried)
+    lost = [f for f in discover(base, scope, []) if not (candidate / f).is_file()]
+    lost_allowed = [f for f in lost if f in DELETED_TEST_ALLOWLIST]
+    lost = [f for f in lost if f not in DELETED_TEST_ALLOWLIST]
     print(f"carry-test-gate: candidate {candidate_sha} on base {base_sha}")
     print(f"carry-test-gate: {len(files)} test files ({', '.join(scope)} + {len(carried)} carried), {args.jobs} jobs")
 
@@ -298,10 +306,11 @@ def main() -> int:
     result = {
         "candidate": candidate_sha, "base": base_sha, "scope": scope, "carried_test_files": carried,
         "files": len(files), "candidate_failures": len(cand_failed), "upstream_too": len(cand_failed) - len(fork_only),
-        "fork_only": broken, "order_dependent": noise, "ruff_fork_only": [list(r) for r in ruff_new],
+        "fork_only": broken, "order_dependent": noise, "missing_upstream_tests": lost,
+        "missing_upstream_tests_allowlisted": lost_allowed, "ruff_fork_only": [list(r) for r in ruff_new],
         "imports_fork_only": [list(i) for i in imports_new],
         "imports_allowlisted": [list(i) for i in imports_allowed],
-        "seconds": round(elapsed), "passed": not broken and not ruff_new and not imports_new,
+        "seconds": round(elapsed), "passed": not broken and not lost and not ruff_new and not imports_new,
     }
     lines = [
         f"## Carry test gate: {'passed' if result['passed'] else 'FAILED'}",
@@ -309,11 +318,14 @@ def main() -> int:
         f"- failing on the candidate: {len(cand_failed)}; also failing on upstream: {result['upstream_too']}",
         f"- fork-only, failing alone too: {len(broken)}",
         f"- fork-only in the batch, passing alone (order-dependent, not fatal): {len(noise)}",
+        f"- upstream test files missing from the candidate: {len(lost)} (allowlisted: {len(lost_allowed)})",
         f"- fork-only undefined names (ruff {RUFF_SELECT}): {len(ruff_new)}",
         f"- fork-only unresolved local imports: {len(imports_new)} (allowlisted: {len(imports_allowed)})",
     ]
     lines += [f"  - FAIL `{n}`" for n in broken]
     lines += [f"  - noise `{n}`" for n in noise]
+    lines += [f"  - MISSING `{f}`" for f in lost]
+    lines += [f"  - allowed missing `{f}`: {DELETED_TEST_ALLOWLIST[f]}" for f in lost_allowed]
     lines += [f"  - RUFF `{f}` {code} {msg}" for f, code, msg in ruff_new]
     lines += [f"  - IMPORT `{f}` from {mod} import {name}" for f, mod, name in imports_new]
     lines += [f"  - allowed `{f}` from {mod} import {name}: {IMPORT_ALLOWLIST[(mod, name)]}"
@@ -322,6 +334,8 @@ def main() -> int:
     print(text)
     for node in broken:
         print(f"::error title=carry-test-gate::fork-only test failure {node}")
+    for f in lost:
+        print(f"::error file={f},title=carry-test-gate::upstream test file missing from the candidate")
     for f, code, msg in ruff_new:
         print(f"::error file={f},title=carry-test-gate::fork-only {code} {msg}")
     for f, mod, name in imports_new:

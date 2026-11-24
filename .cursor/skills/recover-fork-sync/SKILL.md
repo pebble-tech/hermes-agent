@@ -95,6 +95,8 @@ The run summary lists each fork-only failing test (`FAIL`) and each fork-only
 undefined name (`RUFF`) and each fork-only local import that does not resolve
 (`IMPORT`). Upstream passes those tests at the same base, so a
 carry broke them, usually through a rebase that took one side of a conflict.
+`MISSING` names an upstream test file the rebuilt `main` lacks: a carry's
+rebase deleted it. Restore it on that carry; do not allowlist it to pass.
 
 1. Find the carry: `git log upstream/main..origin/main -- <file>` on the files
    in the traceback, then that carry's own rebase commits.
