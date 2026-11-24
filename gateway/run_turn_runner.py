@@ -1566,13 +1566,14 @@ class TurnRunner(GatewayTurnProgressMixin, GatewaySessionAgentMixin):
         # filled in here would reach the chat for a turn no human started (#135816).
         if final_response is None:
             final_response = ""
-        # Successful end_turn exits often have empty prose; avoid the old
-        # ``if not final_response`` bailout unless failure metadata matches.
+        # A successful end_turn exit often has empty prose and skips the "no response" notice; any
+        # other empty reply, and a failed end_turn, still gets it.
         _empty_final = final_response == ""
         if _empty_final and not is_intentional_silence_agent_result(result, final_response) and (
             result.get("failed")
             or result.get("partial")
             or result.get("error")
+            or result.get("turn_exit_reason") != "end_turn_tool_batch"
         ):
             final_response = _normalize_empty_agent_response(result, final_response or "", history_len=len(agent_history))
             final_response = _sanitize_gateway_final_response(ctx.source.platform, final_response)
