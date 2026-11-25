@@ -84,30 +84,34 @@ If `failed_branch` is missing, read the workflow log URL for the failing step.
 Symptoms: rebase conflict on a `FEATURE_BRANCHES` entry; upstream already has
 equivalent code; NousResearch PR closed without merge or merged elsewhere.
 
+This is a semantic conflict (see Push scope). Retiring a carry is Kong's
+decision: push nothing, delete nothing, and do not edit `FEATURE_BRANCHES`.
+
 1. Confirm on `upstream/main` (grep / log / compare).
-2. **PR or push to `ops-overlay` only:**
-   - Remove `carry/<name>` from `FEATURE_BRANCHES` in `.github/workflows/sync-upstream.yml`
-   - Update `FORK.md` upstream PR table
-   - Short commit message: `ops(fork): drop #NNNN <name> from sync`
-3. Delete the dead carry from origin: `git push origin --delete carry/<name>`.
-   The PR branch (`<name>` or `pr/<name>`) is Kong's to delete; say so on the
-   issue.
+2. Alert Kong on the `sync-failure` issue (mentioning `@vKongv`) with the
+   evidence: the upstream commit or PR that covers the carry, the diff between
+   the carry and upstream's version, the conflict, and any test output.
+3. Propose the retirement for Kong to do: remove `carry/<name>` from
+   `FEATURE_BRANCHES` and the `FORK.md` PR table via `ops-overlay`
+   (`ops(fork): drop #NNNN <name> from sync`), then delete `carry/<name>` and
+   the PR branch.
 4. Do **not** rebase the obsolete carry.
 
-If you are not sure upstream's version is equivalent, treat it as a semantic
-conflict (see Push scope): stop and alert Kong.
-
-Example: #17165 WhatsApp text batch superseded by upstream `b0ce47daa` → drop
-`feature/whatsapp-inbound-text-batch` from `FEATURE_BRANCHES`.
+Example: #17165 WhatsApp text batch superseded by upstream `b0ce47daa` → Kong
+dropped `feature/whatsapp-inbound-text-batch` from `FEATURE_BRANCHES`.
 
 ### B. Rebase conflict — patch still needed
 
-1. `git checkout -B carry/<name> origin/carry/<name>`
+`failed_branch` is a carry (`carry/<name>`) or `ops-overlay`
+(`failed_step: rebase-ops-overlay`). Use that name for `<branch>` below.
+
+1. `git checkout -B <branch> origin/<branch>`
 2. `git rebase upstream/main` — resolve conflicts. If upstream refactored the
    area or merged an equivalent fix, stop (semantic conflict, see Push scope).
 3. Run focused tests and the carry's own test files (`git diff --name-only
    upstream/main..HEAD -- tests/`), then the carry test gate (below)
-4. Only if all pass: `git push --force-with-lease origin carry/<name>`
+   (for `ops-overlay`, the focused tests and the gate)
+4. Only if all pass: `git push --force-with-lease origin <branch>`
 
 Fork-only tweaks go on `ops-overlay`, or as commits titled `[fork-only] ...`
 at the tip of `carry/<name>`. Never on a PR branch.
@@ -115,7 +119,8 @@ at the tip of `carry/<name>`. Never on a PR branch.
 ### C. Cherry-pick conflict rebuilding `main`
 
 Two feature branches touch the same lines. Fix the **later** branch in
-`FEATURE_BRANCHES` order, or reorder/drop one via ops-overlay if redundant.
+`FEATURE_BRANCHES` order (as in B). If one carry looks redundant or the order
+needs to change, do not reorder or drop it: alert Kong (as in A).
 
 ### D. Test or plugin smoke failure
 

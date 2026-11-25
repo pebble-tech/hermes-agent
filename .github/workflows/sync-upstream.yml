@@ -623,7 +623,7 @@ jobs:
               `5. Plugin smoke-test failed — \`pebble-tech/hermes-plugin-gateway-policy\` no longer loads cleanly.`,
               `6. Rebase conflict on \`ops-overlay\` — rare; only touches \`.github/workflows/sync-upstream.yml\` and \`FORK.md\`.`,
               ``,
-              `If upstream absorbed the patch (closed/superseded PR), drop the branch from \`FEATURE_BRANCHES\` via \`ops-overlay\` — do not rebase the dead branch.`,
+              `If upstream absorbed the patch (closed/superseded PR, or an equivalent fix merged), do not rebase the dead branch. That is a semantic conflict: the agent pushes and deletes nothing and alerts Kong with the upstream commit or PR, the diff and test output; Kong drops the carry from \`FEATURE_BRANCHES\`.`,
               ``,
               `Push only \`carry/*\` or \`ops-overlay\`, after the carry tests pass. On a test failure or a semantic conflict (upstream refactored the area or merged an equivalent fix), push nothing: stop and alert Kong with the conflict diff and test output. Never push an upstream PR head (\`pr/*\` or an open PR's branch).`,
               ``,
