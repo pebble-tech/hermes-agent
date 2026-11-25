@@ -21,7 +21,7 @@ jobs:
             --arg repository "${{ github.repository }}" \
             --arg upstream_sha "connectivity-test" \
             --arg failed_step "rebase-feature-branch" \
-            --arg failed_branch "feature/example-upstream" \
+            --arg failed_branch "carry/feature/example-upstream" \
             --argjson conflict_files '["gateway/example.py"]' \
             --arg workflow_run_url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
             '{

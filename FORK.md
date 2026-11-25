@@ -2,7 +2,7 @@
 
 Fork of [NousResearch/hermes-agent](https://github.com/NousResearch/hermes-agent) used as the deploy target for [pebble-tech/nudge-hermes-agents](https://github.com/pebble-tech/nudge-hermes-agents) customer VPSes. `main` is a runtime-ready integration branch — clone it and it works.
 
-> **As of 2026-11-24:** open upstream PRs: [#16489](https://github.com/NousResearch/hermes-agent/pull/16489) (busy-path `pre_gateway_dispatch`) and [#61538](https://github.com/NousResearch/hermes-agent/pull/61538) (Telegram forum topic quote-reply). [#20713](https://github.com/NousResearch/hermes-agent/pull/20713), [#53544](https://github.com/NousResearch/hermes-agent/pull/53544), [#89399](https://github.com/NousResearch/hermes-agent/pull/89399), [#96053](https://github.com/NousResearch/hermes-agent/pull/96053) and [#126103](https://github.com/NousResearch/hermes-agent/pull/126103) were closed upstream on 2026-10-12; their branches are still carried as fork-only patches, as are `fix/cancelled-turn-interrupts-agent` and `feat/web-search-depth`. [#24853](https://github.com/NousResearch/hermes-agent/pull/24853) (diagnostic status) and `fix/gateway-log-no-message-text` were dropped on 2026-11-24 because upstream covers both. Otherwise `main = upstream/main + ops-overlay + cherry-picked feature branches`.
+> **As of 2026-11-24:** open upstream PRs: [#16489](https://github.com/NousResearch/hermes-agent/pull/16489) (busy-path `pre_gateway_dispatch`) [#61538](https://github.com/NousResearch/hermes-agent/pull/61538) (Telegram forum topic quote-reply) and [#137187](https://github.com/NousResearch/hermes-agent/pull/137187) (cancelled turn interrupts the agent). [#20713](https://github.com/NousResearch/hermes-agent/pull/20713), [#53544](https://github.com/NousResearch/hermes-agent/pull/53544), [#89399](https://github.com/NousResearch/hermes-agent/pull/89399), [#96053](https://github.com/NousResearch/hermes-agent/pull/96053) and [#126103](https://github.com/NousResearch/hermes-agent/pull/126103) were closed upstream on 2026-10-12; their branches are still carried as fork-only patches, as is `feat/web-search-depth`. [#24853](https://github.com/NousResearch/hermes-agent/pull/24853) (diagnostic status) and `fix/gateway-log-no-message-text` were dropped on 2026-11-24 because upstream covers both. Otherwise `main = upstream/main + ops-overlay + cherry-picked carry/* branches`.
 
 ## Branches
 
@@ -10,8 +10,22 @@ Fork of [NousResearch/hermes-agent](https://github.com/NousResearch/hermes-agent
 |---|---|---|---|
 | `main` | Rebuilt each sync run as: upstream `main` + `ops-overlay` + every open `FEATURE_BRANCHES` entry. | yes (rebuilt) | **Deploy from here.** `git clone && git checkout main`. |
 | `ops-overlay` | Upstream `main` + one commit containing `.github/workflows/sync-upstream.yml` and this `FORK.md`. | yes | Source of truth for fork-level ops. |
+| `carry/<name>` | One fork patch each; `FEATURE_BRANCHES` lists only these. | in the runner only | What the sync builds `main` from. Moved only by a conflict fix. |
+| `<name>` / `pr/<name>` | Head of an open upstream PR. | no | Human-only. Never in `FEATURE_BRANCHES`. |
 
-Other branches and tags are inherited from the initial fork and are **not** maintained — they will drift over time. Only the two branches above are rebased by the sync workflow.
+Other branches and tags are inherited from the initial fork and are **not** maintained — they will drift over time. Only `ops-overlay` and `main` are pushed by the sync workflow.
+
+### Carry and PR branches
+
+A patch the fork carries and a patch offered upstream are separate branches, so fork upkeep never moves an upstream PR (each push re-runs Nous CI and resets maintainer approval) and fork-only changes never leak into one.
+
+- **`carry/<name>`** is what `main` is built from. The sync rebases it in the runner and never pushes it. On a conflict, the recovery agent or a human rebases it, runs the carry tests (focused tests, the carry's own test files, the carry test gate) and only then force-pushes it.
+- **PR branches** (the open PRs' existing heads, such as `fix/busy-path-pre-gateway-dispatch-upstream`, and every `pr/<name>`) are human-only. A ruleset blocks automation from pushing them. Refresh one only on purpose (a maintainer asks, or an upstream fix needs it) by cherry-picking the non-`[fork-only]` commits from `carry/<name>` in one push.
+- **Fork-only tweaks** go on `ops-overlay`, or as commits titled `[fork-only] ...` at the tip of `carry/<name>`. Never on a PR branch.
+- **New upstream PRs** come from `pr/<name>`, cut from `carry/<name>` with the `[fork-only]` commits dropped.
+- **After upstream merges a PR**, drop `carry/<name>` from `FEATURE_BRANCHES` and delete both `carry/<name>` and the PR branch.
+- **Automation pushes only `carry/*` and `ops-overlay`.** On a test failure or a semantic conflict (upstream refactored the area or merged an equivalent fix) it pushes nothing and alerts Kong with the conflict diff and the test output. It never takes upstream's side of a carry hunk without checking that hunk's callers.
+- **Before merging a change to `sync-upstream.yml` or the carry test gate**, cancel any queued sync run (`gh run list -R pebble-tech/hermes-agent -w sync-upstream.yml -s queued`, then `gh run cancel <id>`). A queued run keeps the workflow file it was triggered with, so it would run the old definition after the merge.
 
 ## How the fork stays current
 
@@ -19,7 +33,7 @@ A scheduled GitHub Actions workflow ([`.github/workflows/sync-upstream.yml`](.gi
 
 1. Fetches `NousResearch/hermes-agent:main`.
 2. Rebases `ops-overlay` onto `upstream/main`.
-3. Rebases each branch in `FEATURE_BRANCHES` onto `upstream/main` inside the runner only. These rebases feed step 4 and are never pushed: some carried branches are the head of an open upstream PR, and a daily force-push would re-run Nous CI on them. A carried branch moves only when someone resolves a conflict on it and pushes it (see recovery below).
+3. Rebases each `carry/*` branch in `FEATURE_BRANCHES` onto `upstream/main` inside the runner only. These rebases feed step 4 and are never pushed. A carry moves only when someone resolves a conflict on it and pushes it (see recovery below).
 4. Rebuilds `main` from scratch: checks out `upstream/main`, then cherry-picks `ops-overlay` followed by each feature branch's commits.
 5. Strips upstream GitHub Actions workflows from integration `main`, keeping only the `WORKFLOW_ALLOWLIST` (default: `sync-upstream.yml`, `test-cursor-webhook.yml`, `sealed-release.yml`). This fork is a deploy target — Nous CI/publish/autofix should not re-run here; the carry test gate in this workflow (step 8) is the check. The strip must happen before the push: the push uses a PAT, and PAT pushes trigger workflows, so any upstream push-on-main workflow still on `main` would run once.
 6. Installs `hermes-agent` from the rebuilt `main` via `uv`.
@@ -30,7 +44,7 @@ A scheduled GitHub Actions workflow ([`.github/workflows/sync-upstream.yml`](.gi
    - `tests/hermes_cli/test_plugins.py`
 8. Runs the carry test gate ([`.github/scripts/carry_test_gate.py`](.github/scripts/carry_test_gate.py), taken from the rebased `ops-overlay`) on the rebuilt `main` against a checkout of the same `upstream/main`. See [The carry test gate](#the-carry-test-gate).
 9. Clones `pebble-tech/hermes-plugin-gateway-policy` and runs its test suite (smoke-test catches plugin-side drift).
-10. On success → uploads the gate report as artifact `carry-test-gate-<main sha>`, `push --force-with-lease` `ops-overlay` and `main`, then records a `carry-test-gate` success commit status on the pushed `main` that points to the run. The push requires the gate's success. Carried feature branches are not pushed.
+10. On success → uploads the gate report as artifact `carry-test-gate-<main sha>`, `push --force-with-lease` `ops-overlay` and `main`, then records a `carry-test-gate` success commit status on the pushed `main` that points to the run. The push requires the gate's success. `carry/*` and PR branches are not pushed.
 11. Disables, through the Actions API, every active workflow in the repo whose file name is not in `WORKFLOW_ALLOWLIST` (default: `sync-upstream.yml`, `test-cursor-webhook.yml`, `sealed-release.yml`). This covers `ops-overlay`, the carried branches and fork PRs, which keep upstream's files. It runs after the push, and also when the sync failed part-way, so a new upstream workflow is disabled on the next run either way. It never fails the sync: a workflow it cannot disable is logged as a `::warning::`. Workflows already disabled by hand are left alone. This fork is a deploy target — Nous CI/publish/autofix should not run here; the carry test gate in this workflow is the check.
 12. On **any** failure → opens (or comments on) a `sync-failure`-labelled issue with the run URL, upstream SHA, failed step/branch, and a machine-readable `sync-failure` YAML block. Optionally POSTs the same payload to a Cursor automation webhook (see [FORK_SYNC_AUTOMATION.md](FORK_SYNC_AUTOMATION.md)). Never force-pushes a broken state.
 
@@ -57,26 +71,27 @@ python .github/scripts/carry_test_gate.py --candidate . --base ../upstream-base
 
 ## Adding a new fork patch
 
-1. Branch off `upstream/main`, make the commit, open an upstream PR.
-2. Push the branch to this fork as `feature/<name>`.
-3. Add `feature/<name>` to the `FEATURE_BRANCHES` env var in the sync workflow. Commit via `ops-overlay`.
+1. Branch off `upstream/main`, make the commit.
+2. Push it to this fork as `carry/<name>`.
+3. Add `carry/<name>` to the `FEATURE_BRANCHES` env var in the sync workflow. Commit via `ops-overlay`.
 4. Next scheduled run (or manual dispatch) folds it into `main`.
+5. To offer it upstream, push `pr/<name>` (from `carry/<name>`, without `[fork-only]` commits) and open the PR from it. See [Carry and PR branches](#carry-and-pr-branches).
 
-When an upstream PR merges, drop its branch from `FEATURE_BRANCHES` via an `ops-overlay` commit and delete the branch from the fork. The cherry-pick becomes a no-op once upstream absorbs the change.
+When an upstream PR merges, drop `carry/<name>` from `FEATURE_BRANCHES` via an `ops-overlay` commit and delete both `carry/<name>` and the PR branch from the fork. The cherry-pick becomes a no-op once upstream absorbs the change.
 
-Carried branches keep their last pushed base, because the sync no longer pushes them, so each run's rebase depends on that older history. If upstream absorbs only part of a patch, a clean daily rebase can turn into a conflict; the normal recovery path handles it. If upstream absorbs a change and later reverts it, a stale branch can bring it back into integration `main`. Only commits whose patch-id exactly matches an upstream commit are dropped. So drop a branch from `FEATURE_BRANCHES` as soon as upstream absorbs it, and refresh a stale branch through the recovery path when its upstream PR needs updating.
+Carried branches keep their last pushed base, because the sync no longer pushes them, so each run's rebase depends on that older history. If upstream absorbs only part of a patch, a clean daily rebase can turn into a conflict; the normal recovery path handles it. If upstream absorbs a change and later reverts it, a stale branch can bring it back into integration `main`. Only commits whose patch-id exactly matches an upstream commit are dropped. So drop a carry from `FEATURE_BRANCHES` as soon as upstream absorbs it. Refreshing an upstream PR is a separate, human step (see [Carry and PR branches](#carry-and-pr-branches)).
 
 ## Recovering from a sync failure
 
 When sync fails, the workflow files a `sync-failure` issue with structured metadata. Recovery options:
 
 1. **Cursor automation** (recommended once configured) — webhook triggers a cloud agent that follows [`.cursor/skills/recover-fork-sync/SKILL.md`](.cursor/skills/recover-fork-sync/SKILL.md). One-time setup: [FORK_SYNC_AUTOMATION.md](FORK_SYNC_AUTOMATION.md).
-2. **Manual** — fix the failing **source branch** (`ops-overlay` or a `FEATURE_BRANCHES` entry), not integration `main`:
+2. **Manual** — fix the failing **source branch** (`ops-overlay` or a `carry/*` entry of `FEATURE_BRANCHES`), not integration `main` and not a PR branch:
 
 ```bash
 git fetch upstream
 # Identify failed_branch from the issue sync-failure block, then:
-git checkout <branch>              # ops-overlay or feature/*
+git checkout <branch>              # ops-overlay or carry/*
 git rebase upstream/main           # resolve conflicts, or drop branch if upstream absorbed it
 uv python install 3.14
 uv sync --locked --python 3.14 --extra all --group dev
@@ -87,8 +102,9 @@ python -m pytest tests/gateway/test_pre_gateway_dispatch.py \
                  tests/hermes_cli/test_plugins.py -q
 # For a carry, also run the carry test gate on a local rebuild of main
 # (see "The carry test gate"); a fix that makes it pass by taking upstream's
-# side of a conflict is how the 12-15 Nov breaks shipped.
-git push --force-with-lease origin <branch>
+# side of a conflict is how the 12-15 Nov breaks shipped. If a test fails or
+# upstream refactored the area or merged an equivalent fix, do not push.
+git push --force-with-lease origin <branch>   # carry/* or ops-overlay only
 gh workflow run sync-upstream.yml --repo pebble-tech/hermes-agent --ref main
 ```
 

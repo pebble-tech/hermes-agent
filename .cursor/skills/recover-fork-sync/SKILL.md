@@ -15,8 +15,31 @@ integration `main`. Never patch `main` directly — sync force-rebuilds it from
 upstream + cherry-picks.
 
 The sync rebases `FEATURE_BRANCHES` only inside the runner and never pushes
-them, so `origin/<branch>` can sit on an older upstream base. Your fix push
+them, so `origin/carry/<name>` can sit on an older upstream base. Your fix push
 (B, C or D below) is the only time a carried branch moves.
+
+## Push scope (hard limit)
+
+You may push **only** `carry/*` and `ops-overlay`. Never push `main`, `pr/*`,
+or the head branch of an open upstream PR (for example
+`fix/busy-path-pre-gateway-dispatch-upstream`). PR branches are human-only; a
+ruleset blocks automation from pushing them. Check every push target first:
+
+```bash
+case "$target" in carry/*|ops-overlay) ;; *) echo "refusing to push $target"; exit 1 ;; esac
+```
+
+Push nothing, stop, and alert Kong when either holds:
+
+- the carry tests (focused tests, the carry's own test files, then the carry
+  test gate) fail after your fix;
+- the conflict is semantic: upstream refactored the area the carry touches, or
+  merged an equivalent fix.
+
+Alert Kong by commenting on the `sync-failure` issue (open one if there is
+none) mentioning `@vKongv`, with the conflict diff (`git diff` of the
+conflicted files, or `git range-diff`) and the test output. Leave the issue
+open. Do not push a partial fix.
 
 ## Read first
 
@@ -47,7 +70,7 @@ Parse the `sync-failure` YAML block or webhook JSON:
 |-------|---------|
 | `upstream_sha` | NousResearch `main` at failure time |
 | `failed_step` | `rebase-ops-overlay`, `rebase-feature-branch`, `cherry-pick-main`, `focused-tests`, `carry-test-gate`, `plugin-smoke-test`, `push`, `record-gate` |
-| `failed_branch` | Source branch to fix (`ops-overlay` or a `FEATURE_BRANCHES` entry) |
+| `failed_branch` | Source branch to fix (`ops-overlay` or a `FEATURE_BRANCHES` entry, always `carry/<name>`) |
 | `conflict_files` | Paths from rebase/cherry-pick |
 | `workflow_run_url` | Actions log |
 | `issue_number` | Open `sync-failure` issue (if any) |
@@ -63,21 +86,31 @@ equivalent code; NousResearch PR closed without merge or merged elsewhere.
 
 1. Confirm on `upstream/main` (grep / log / compare).
 2. **PR or push to `ops-overlay` only:**
-   - Remove branch from `FEATURE_BRANCHES` in `.github/workflows/sync-upstream.yml`
+   - Remove `carry/<name>` from `FEATURE_BRANCHES` in `.github/workflows/sync-upstream.yml`
    - Update `FORK.md` upstream PR table
-   - Short commit message: `ops(fork): drop #NNNN <branch> from sync`
-3. Delete dead branch from origin: `git push origin --delete <branch>`
-4. Do **not** rebase the obsolete feature branch.
+   - Short commit message: `ops(fork): drop #NNNN <name> from sync`
+3. Delete the dead carry from origin: `git push origin --delete carry/<name>`.
+   The PR branch (`<name>` or `pr/<name>`) is Kong's to delete; say so on the
+   issue.
+4. Do **not** rebase the obsolete carry.
+
+If you are not sure upstream's version is equivalent, treat it as a semantic
+conflict (see Push scope): stop and alert Kong.
 
 Example: #17165 WhatsApp text batch superseded by upstream `b0ce47daa` → drop
 `feature/whatsapp-inbound-text-batch` from `FEATURE_BRANCHES`.
 
 ### B. Rebase conflict — patch still needed
 
-1. `git checkout -B <failed_branch> origin/<failed_branch>`
-2. `git rebase upstream/main` — resolve conflicts
-3. Run focused tests (see below)
-4. `git push --force-with-lease origin <failed_branch>`
+1. `git checkout -B carry/<name> origin/carry/<name>`
+2. `git rebase upstream/main` — resolve conflicts. If upstream refactored the
+   area or merged an equivalent fix, stop (semantic conflict, see Push scope).
+3. Run focused tests and the carry's own test files (`git diff --name-only
+   upstream/main..HEAD -- tests/`), then the carry test gate (below)
+4. Only if all pass: `git push --force-with-lease origin carry/<name>`
+
+Fork-only tweaks go on `ops-overlay`, or as commits titled `[fork-only] ...`
+at the tip of `carry/<name>`. Never on a PR branch.
 
 ### C. Cherry-pick conflict rebuilding `main`
 
@@ -100,13 +133,13 @@ rebase deleted it. Restore it on that carry; do not allowlist it to pass.
 
 1. Find the carry: `git log upstream/main..origin/main -- <file>` on the files
    in the traceback, then that carry's own rebase commits.
-2. Fix it on that carry branch (as in B) so upstream's test passes. Do not edit
+2. Fix it on that `carry/<name>` branch (as in B) so upstream's test passes. Do not edit
    or delete upstream's test to make it pass. The one exception is a test that
    pins behaviour the carry changes on purpose (its commit message says what it
    changes); then update only that expectation, on the carry, and say so in the
    commit message.
 3. Rebuild `main` locally the way the sync does and run the gate on it (below).
-4. Push the carry branch, then trigger sync.
+4. Push `carry/<name>` only if the gate passed, then trigger sync.
 
 `record-gate`: the push succeeded but writing the `carry-test-gate` status
 failed. Re-run the sync; nothing is wrong with the branches.
@@ -142,7 +175,8 @@ run it once, after the focused tests pass.
 
 ## After fix — trigger sync
 
-**Default:** push the fixed source branch directly:
+**Default:** after the carry tests pass, push the fixed source branch
+(`carry/<name>` or `ops-overlay`, nothing else) directly:
 
 ```bash
 git push --force-with-lease origin <failed_branch>
@@ -155,7 +189,7 @@ updated source tip.
 Open a PR **only if** force-push is blocked or human review is required before
 updating the source branch. If you open a PR:
 
-- base = the **source branch** (`ops-overlay` or `feature/*` / `fix/*`)
+- base = the **source branch** (`ops-overlay` or `carry/*`)
 - never base = integration `main`
 
 Then trigger sync:
@@ -190,5 +224,13 @@ git rev-list --count origin/main..upstream/main   # should be 0 after successful
 - When resolving a conflict on a carry, do not take upstream's side of a hunk
   the carry needs without checking every caller of what the carry moved or
   renamed (lazy imports inside functions, `mock.patch` targets, docs)
+- Do **not** push anything but `carry/*` and `ops-overlay` (see Push scope).
+  Never push `main`, `pr/*` or an open upstream PR's head branch
+- Do **not** push when the carry tests fail or the conflict is semantic; alert
+  Kong instead
+- Before merging a change to `sync-upstream.yml` or the carry test gate, cancel
+  any queued sync run (`gh run list -R pebble-tech/hermes-agent -w
+  sync-upstream.yml -s queued`, then `gh run cancel <id>`): a queued run keeps
+  the old workflow file
 - Do **not** open a recovery PR against `main` when the source branch is already updated
 - Minimize scope — fork ops only, no unrelated Hermes core changes
