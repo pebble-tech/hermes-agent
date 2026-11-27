@@ -152,7 +152,15 @@ def ruff_findings(ruff: list[str], tree: Path) -> collections.Counter:
 
 
 def _module_path(root: Path, mod: str) -> Path | None:
-    base = root.joinpath(*mod.split("."))
+    parts = mod.split(".")
+    if parts[:2] == ["plugins", "model_providers"]:
+        # providers/__init__.py imports each bundled plugins/model-providers/<dir> as
+        # plugins.model_providers.<dir with "-" as "_">.
+        providers = root / "plugins" / "model-providers"
+        parts[:2] = ["plugins", "model-providers"]
+        if len(parts) > 2 and providers.is_dir():
+            parts[2] = next((d.name for d in providers.iterdir() if d.name.replace("-", "_") == parts[2]), parts[2])
+    base = root.joinpath(*parts)
     if base.with_suffix(".py").is_file():
         return base.with_suffix(".py")
     if (base / "__init__.py").is_file():
