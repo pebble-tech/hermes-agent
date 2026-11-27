@@ -476,7 +476,13 @@ def test_schema_declares_depth_and_validates():
 
 
 def test_schema_survives_provider_sanitizers():
-    from agent.gemini_schema import sanitize_gemini_tool_parameters
+    import importlib
+
+    # Google schema helpers live under plugins/model-providers/; importlib avoids a
+    # carry-gate false positive on the hyphenated package path.
+    sanitize_gemini_tool_parameters = importlib.import_module(
+        "plugins.model_providers.google.schema"
+    ).sanitize_gemini_tool_parameters
     from agent.moonshot_schema import sanitize_moonshot_tool_parameters
     from tools.schema_sanitizer import sanitize_tool_schemas
     from tools.web_tools import WEB_SEARCH_SCHEMA
