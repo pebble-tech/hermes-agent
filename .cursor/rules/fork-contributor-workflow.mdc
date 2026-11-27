@@ -15,15 +15,16 @@ This repo is a **deploy fork**, not vanilla upstream. Read [FORK.md](../../FORK.
 
 ```bash
 git fetch upstream
-git checkout -b fix/<short-name> upstream/main
+git checkout -b pr/<short-name> upstream/main
 # one focused commit
-git push origin fix/<short-name>
-# open PR against NousResearch/hermes-agent main
+git push origin pr/<short-name>          # human only: a ruleset blocks automation on pr/*
+git push origin pr/<short-name>:refs/heads/carry/<short-name>
+# open PR from pr/<short-name> against NousResearch/hermes-agent main
 ```
 
 - **One focused commit per upstream PR** when possible.
 - If the fix landed on fork `main` by mistake, **cherry-pick** the commit onto a fresh `upstream/main` branch — do not retarget the fork-main branch.
-- After opening the upstream PR, push the same branch to this fork and add it to `FEATURE_BRANCHES` in `.github/workflows/sync-upstream.yml` (commit that change on **`ops-overlay`**, not `main`).
+- Add `carry/<short-name>` to `FEATURE_BRANCHES` in `.github/workflows/sync-upstream.yml` (commit that change on **`ops-overlay`**, not `main`). Never list the PR head branch in `FEATURE_BRANCHES`. For a patch already carried, cut the PR branch as `pr/<name>` from `carry/<name>` without its `[fork-only]` commits. See FORK.md "Carry and PR branches".
 
 ### Fork-only patches (pebble-tech/hermes-agent)
 

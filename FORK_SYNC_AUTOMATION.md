@@ -18,10 +18,11 @@ You are recovering a failed pebble-tech/hermes-agent upstream sync.
 
 1. Read the webhook JSON payload (event, upstream_sha, failed_step, failed_branch, conflict_files, workflow_run_url, issue_number).
 2. Read FORK.md and follow .cursor/skills/recover-fork-sync/SKILL.md exactly.
-3. Fix the failing SOURCE branch (ops-overlay or a FEATURE_BRANCHES entry). Never commit recovery fixes to integration main.
-4. If upstream absorbed the patch (closed/superseded PR), drop the branch from FEATURE_BRANCHES via an ops-overlay change (push or PR to ops-overlay only).
-5. Default delivery: after focused tests and the carry test gate pass, `git push --force-with-lease origin <source-branch>`. Do NOT open a pull request when the source branch was updated successfully.
-6. Open a PR only if force-push is blocked or human review is required before updating the source branch. If you open a PR, base it on the SOURCE branch (ops-overlay or feature/*), never integration main. Do not leave orphan cursor/* branches that duplicate an already-updated source tip.
+3. Fix the failing SOURCE branch (ops-overlay or a carry/* entry of FEATURE_BRANCHES). Never commit recovery fixes to integration main. Push only carry/* and ops-overlay; never main, pr/* or an open upstream PR's head branch.
+4. If upstream absorbed the patch (closed/superseded PR, or an equivalent fix merged), that is a semantic conflict: do not edit FEATURE_BRANCHES, push or delete anything. Comment on the sync-failure issue mentioning @vKongv with the upstream commit/PR, the diff and any test output, and propose the drop for Kong to do.
+5. Default delivery: after focused tests, the carry's own test files and the carry test gate pass, `git push --force-with-lease origin <source-branch>`. Do NOT open a pull request when the source branch was updated successfully.
+   If a test fails, or the conflict is semantic (upstream refactored the area or merged an equivalent fix), push nothing: comment on the sync-failure issue mentioning @vKongv with the conflict diff and test output, and stop. Never take upstream's side of a carry hunk without checking its callers.
+6. Open a PR only if force-push is blocked or human review is required before updating the source branch. If you open a PR, base it on the SOURCE branch (ops-overlay or carry/*), never integration main. Do not leave orphan cursor/* branches that duplicate an already-updated source tip.
 7. After the source branch is updated, run: gh workflow run sync-upstream.yml --repo pebble-tech/hermes-agent --ref main
 8. Wait for sync success, comment on the sync-failure issue, close it.
 
@@ -51,6 +52,10 @@ Optional for cloud agent sandbox (if `gh issue view` fails with permission error
 |--------------|--------|
 | `GH_TOKEN` | Cursor automation environment variables (PAT with `repo` scope) |
 
+Do not put Kong's PAT (or any admin's) in `GH_TOKEN`: admins bypass the
+PR-head ruleset, so the agent could push PR branches through it. Use a
+non-admin machine-user token, or none.
+
 ### 3. Merge ops-overlay changes
 
 Automation wiring is committed on **`ops-overlay`**. After merge:
@@ -72,7 +77,7 @@ curl -sf -X POST "$CURSOR_SYNC_RECOVERY_WEBHOOK_URL" \
     "repository": "pebble-tech/hermes-agent",
     "upstream_sha": "test",
     "failed_step": "rebase-feature-branch",
-    "failed_branch": "feature/example-upstream",
+    "failed_branch": "carry/feature/example-upstream",
     "conflict_files": ["gateway/example.py"],
     "workflow_run_url": "https://github.com/pebble-tech/hermes-agent/actions/runs/0",
     "issue_number": null
@@ -94,6 +99,8 @@ On sync **success**: no webhook, no new issue.
 ## Security
 
 - Webhook URL + key are repo secrets — never commit them
+- The agent pushes only `carry/*` and `ops-overlay`. Upstream PR heads (`pr/*` and the open PRs' branches) are human-only and protected by a ruleset that lets only repository and organization admins push
+- The ruleset blocks the Cursor App identity (`cursor[bot]`). It does not block the sync: `SYNC_PUSH_TOKEN` is Kong's PAT, Kong is an admin, and admins bypass. The sync's code pushes only `ops-overlay` and `main`, so today that rests on the workflow, not the ruleset. A Kong token in Cursor's `GH_TOKEN` would defeat the ruleset the same way. Follow-up: move `SYNC_PUSH_TOKEN` to a non-admin machine-user PAT (`repo` + `workflow`)
 - Prefer direct force-with-lease to the failing source branch; open a PR only when push is blocked or review is required
 - Never open recovery PRs against integration `main`
 - Do not grant the agent direct push to `main`

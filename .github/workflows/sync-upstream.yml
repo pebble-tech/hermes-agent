@@ -5,7 +5,11 @@ name: Sync upstream
 # and check out `main` to get a runtime-ready fork.
 #
 # `FEATURE_BRANCHES` carries fork patches. Some still have an open upstream PR; most
-# are fork-only now (their upstream PRs were closed on 2026-10-12). As of 2026-11-24:
+# are fork-only now (their upstream PRs were closed on 2026-10-12). Since
+# 2026-11-25 each carry lives on `carry/<name>`, and `FEATURE_BRANCHES` lists
+# only `carry/*`. The notes below use the bare <name>. An open PR's head
+# (`<name>` or `pr/<name>`) is a separate branch, moved only by a human (see
+# FORK.md "Carry and PR branches"). As of 2026-11-24:
 #
 #   fix/busy-path-pre-gateway-dispatch-upstream → #16489 busy-path
 #   pre_gateway_dispatch (open). Owner-forward base (#16445/#16485) landed
@@ -75,7 +79,7 @@ name: Sync upstream
 #
 #   fix/cancelled-turn-interrupts-agent → a cancelled turn task hard-
 #   interrupts the agent it was awaiting, so its executor thread stops calling
-#   the model and running tools. Upstream PR not opened yet.
+#   the model and running tools. #137187 (open).
 #
 #   fix/gateway-log-no-message-text (INFO inbound-message log line without
 #   message text) is no longer carried. Upstream 53a5c32f18 keeps message text
@@ -113,10 +117,10 @@ name: Sync upstream
 # come back into `main` from a stale branch (see FORK.md).
 #
 # Each run rebases the carried branches only in the runner and builds `main`
-# from those local rebases; it never pushes a carried branch. Some are the head
-# of an open upstream PR, and a daily force-push would re-run Nous CI on them.
-# A carried branch moves only when someone resolves a conflict on it and
-# pushes it (see FORK.md recovery).
+# from those local rebases; it never pushes a carried branch. A `carry/*`
+# branch moves only when someone resolves a conflict on it and pushes it (see
+# FORK.md recovery). Upstream PR heads are not carries: neither this workflow
+# nor the recovery agent pushes them.
 #
 # The carry test gate (.github/scripts/carry_test_gate.py) runs upstream's
 # tests/gateway and tests/agent plus every carried test file on the rebuilt
@@ -167,24 +171,26 @@ env:
   # Independent PRs: add each branch in dependency order (later commits may
   # assume earlier cherry-picks are already on integration main).
   #
+  # List only carry/* branches, never an upstream PR head.
+  #
   # Currently:
-  # - fix/busy-path-pre-gateway-dispatch-upstream is independent (PR #16489);
+  # - carry/fix/busy-path-pre-gateway-dispatch-upstream is independent (PR #16489);
   #   owner-forward ancestors landed upstream via #55584.
-  # - feature/end-turn-tool-contract-upstream is independent (fork-only).
-  # - fix/undelivered-tool-call-content is independent (fork-only). It reads the
+  # - carry/feature/end-turn-tool-contract-upstream is independent (fork-only).
+  # - carry/fix/undelivered-tool-call-content is independent (fork-only). It reads the
   #   end_turn carry's per-row flag by getattr, so it also builds alone.
-  # - fix/telegram-forum-topic-reply-anchor is independent (PR #61538).
-  # - feat/compression-summary-instructions is independent (fork-only).
-  # - feat/telegram-plugin-callback-handlers is independent (fork-only).
-  # - fix/opencode-go-reasoning-effort-coverage is independent (fork-only).
-  # - fix/cancelled-turn-interrupts-agent is independent (fork-only).
-  # - feat/web-search-depth is the tip of a two-PR stack (upstream PRs pending):
+  # - carry/fix/telegram-forum-topic-reply-anchor is independent (PR #61538).
+  # - carry/feat/compression-summary-instructions is independent (fork-only).
+  # - carry/feat/telegram-plugin-callback-handlers is independent (fork-only).
+  # - carry/fix/opencode-go-reasoning-effort-coverage is independent (fork-only).
+  # - carry/fix/cancelled-turn-interrupts-agent is independent (PR #137187).
+  # - carry/feat/web-search-depth is the tip of a two-PR stack (upstream PRs pending):
   #   fork #90 feat/exa-3-provider-knobs (optional web.exa type, dynamic
   #   highlights, max_age_hours and extract cap; exa-py 2.26.0), then fork #92
   #   (optional web_search depth quick | standard | deep, capped by
   #   web.max_depth, default standard). Listing the tip carries both; do not
   #   also list feat/exa-3-provider-knobs.
-  FEATURE_BRANCHES: "fix/busy-path-pre-gateway-dispatch-upstream feature/end-turn-tool-contract-upstream fix/undelivered-tool-call-content fix/telegram-forum-topic-reply-anchor feat/compression-summary-instructions feat/telegram-plugin-callback-handlers fix/opencode-go-reasoning-effort-coverage fix/cancelled-turn-interrupts-agent feat/web-search-depth"
+  FEATURE_BRANCHES: "carry/fix/busy-path-pre-gateway-dispatch-upstream carry/feature/end-turn-tool-contract-upstream carry/fix/undelivered-tool-call-content carry/fix/telegram-forum-topic-reply-anchor carry/feat/compression-summary-instructions carry/feat/telegram-plugin-callback-handlers carry/fix/opencode-go-reasoning-effort-coverage carry/fix/cancelled-turn-interrupts-agent carry/feat/web-search-depth"
   PLUGIN_REPO: pebble-tech/hermes-plugin-gateway-policy
   # Workflows allowed to run on this fork. Two mechanisms use this list:
   # - Strip: the rebuild step removes every other workflow file from integration
@@ -278,8 +284,8 @@ jobs:
           fi
 
       # Rebases into run-local branches only. They feed the integration rebuild
-      # below and are never pushed, so origin/<branch> (an upstream PR head)
-      # keeps its tip until a conflict fix is pushed by hand.
+      # below and are never pushed, so origin/carry/<name> keeps its tip until a
+      # conflict fix is pushed to it.
       - name: Rebase each feature branch onto upstream
         run: |
           for branch in $FEATURE_BRANCHES; do
@@ -617,7 +623,9 @@ jobs:
               `5. Plugin smoke-test failed — \`pebble-tech/hermes-plugin-gateway-policy\` no longer loads cleanly.`,
               `6. Rebase conflict on \`ops-overlay\` — rare; only touches \`.github/workflows/sync-upstream.yml\` and \`FORK.md\`.`,
               ``,
-              `If upstream absorbed the patch (closed/superseded PR), drop the branch from \`FEATURE_BRANCHES\` via \`ops-overlay\` — do not rebase the dead branch.`,
+              `If upstream absorbed the patch (closed/superseded PR, or an equivalent fix merged), do not rebase the dead branch. That is a semantic conflict: the agent pushes and deletes nothing and alerts Kong with the upstream commit or PR, the diff and test output; Kong drops the carry from \`FEATURE_BRANCHES\`.`,
+              ``,
+              `Push only \`carry/*\` or \`ops-overlay\`, after the carry tests pass. On a test failure or a semantic conflict (upstream refactored the area or merged an equivalent fix), push nothing: stop and alert Kong with the conflict diff and test output. Never push an upstream PR head (\`pr/*\` or an open PR's branch).`,
               ``,
               `Setup: [FORK_SYNC_AUTOMATION.md](https://github.com/${context.repo.owner}/${context.repo.repo}/blob/main/FORK_SYNC_AUTOMATION.md)`,
             ]
