@@ -152,7 +152,18 @@ def ruff_findings(ruff: list[str], tree: Path) -> collections.Counter:
 
 
 def _module_path(root: Path, mod: str) -> Path | None:
-    base = root.joinpath(*mod.split("."))
+    parts = mod.split(".")
+    providers = root / "plugins" / "model-providers"
+    if len(parts) > 2 and parts[:2] == ["plugins", "model_providers"] and providers.is_dir() \
+            and not (root / "plugins" / "model_providers").exists():
+        # providers/__init__.py discovery imports each bundled plugins/model-providers/<dir> that has an
+        # __init__.py, in sorted order, as plugins.model_providers.<dir with "-" as "_">.
+        loaded = next((d for d in sorted(providers.iterdir()) if d.is_dir() and not d.name.startswith(("_", "."))
+                       and (d / "__init__.py").is_file() and d.name.replace("-", "_") == parts[2]), None)
+        if loaded is None:
+            return None
+        parts[:3] = ["plugins", "model-providers", loaded.name]
+    base = root.joinpath(*parts)
     if base.with_suffix(".py").is_file():
         return base.with_suffix(".py")
     if (base / "__init__.py").is_file():
